@@ -22,7 +22,7 @@ def execute_roster_assignment(dispatcher_id, thread_id):
         cursor = conn.cursor()
         
         # Route 1, Truck 1, Driver 2 (Nimal - 27h), Assistant 1 (Pathum - 45h), Dispatcher
-        args = (1, 1, 2, 1, dispatcher_id, '2026-08-12 08:00:00', '2026-08-12 12:30:00', 4.5, '')
+        args = (1, 1, 2, 4, dispatcher_id, '2026-08-12 08:00:00', '2026-08-12 12:30:00', 4.5, '')
         
         print(f"[Thread {thread_id}] Attempting roster booking for Driver D-102...")
         result_args = cursor.callproc('sp_assign_truck_roster', args)
