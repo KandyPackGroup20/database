@@ -11,7 +11,7 @@ import os
 DB_CONFIG = {
     'host': os.getenv('MYSQL_HOST', 'localhost'),
     'user': os.getenv('MYSQL_USER', 'root'),
-    'password': os.getenv('MYSQL_PASSWORD', ''),
+    'password': os.getenv('MYSQL_PASSWORD', '1234'),
     'database': os.getenv('MYSQL_DATABASE', 'kandypack_db')
 }
 
