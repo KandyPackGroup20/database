@@ -1,6 +1,11 @@
--- Member 3 Feature 4.3: durable roster decision details and lock-friendly indexes.
--- Apply once after the corrected 00-08 database scripts. This script does not
--- recreate or seed business tables.
+-- Member 3 Feature 4.3:
+-- Durable roster decision details and lock-friendly indexes.
+--
+-- Apply once after the base database scripts 01-08.
+-- Do not also execute 00_master_init.sql because it duplicates and resets
+-- database objects.
+-- This migration does not recreate, reset, or seed business tables.
+
 USE kandypack_db;
 
 CREATE TABLE roster_assignment_audit_detail (
@@ -24,7 +29,7 @@ CREATE TABLE roster_assignment_audit_detail (
     CONSTRAINT fk_roster_audit_detail_audit
         FOREIGN KEY (audit_id) REFERENCES audit_log(audit_id) ON DELETE RESTRICT,
     CONSTRAINT fk_roster_audit_detail_roster
-        FOREIGN KEY (roster_id) REFERENCES roster_assignment(roster_id) ON DELETE SET NULL,
+        FOREIGN KEY (roster_id) REFERENCES roster_assignment(roster_id),
     CONSTRAINT chk_roster_audit_detail_interval CHECK (end_time > start_time),
     CONSTRAINT chk_roster_audit_detail_duration CHECK (duration_seconds > 0),
     CONSTRAINT chk_roster_audit_detail_outcome CHECK (outcome IN ('ACCEPTED', 'REJECTED')),
