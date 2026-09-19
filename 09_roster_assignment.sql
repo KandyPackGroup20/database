@@ -1,11 +1,3 @@
--- Member 3 Feature 4.3:
--- Durable roster decision details and lock-friendly indexes.
---
--- Apply once after the base database scripts 01-08.
--- Do not also execute 00_master_init.sql because it duplicates and resets
--- database objects.
--- This migration does not recreate, reset, or seed business tables.
-
 USE kandypack_db;
 
 CREATE TABLE roster_assignment_audit_detail (
