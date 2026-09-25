@@ -16,3 +16,11 @@ ON roster_assignment (status, start_time, end_time, truck_id, driver_id, assista
 -- 4. Optimizing storage location search
 CREATE INDEX idx_storage_loc_search 
 ON storage_location (station_id, location_code);
+
+-- 5. Feature 4.4: find manifests waiting at a station (Store Manager dashboard)
+CREATE INDEX idx_manifest_station_status
+ON manifest (station_id, status);
+
+-- 6. Feature 4.4: history of one stock row, newest first
+CREATE INDEX idx_stock_adjust_inv_date
+ON stock_adjustment (inventory_id, adjusted_at);

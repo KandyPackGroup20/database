@@ -8,6 +8,7 @@ DROP TABLE IF EXISTS delivery;
 DROP TABLE IF EXISTS roster_assignment;
 DROP TABLE IF EXISTS delivery_staff;
 DROP TABLE IF EXISTS truck;
+DROP TABLE IF EXISTS stock_adjustment;
 DROP TABLE IF EXISTS inventory;
 DROP TABLE IF EXISTS manifest;
 DROP TABLE IF EXISTS rail_allocation;
@@ -49,7 +50,9 @@ CREATE TABLE station_store (
     station_id INT AUTO_INCREMENT PRIMARY KEY,
     city VARCHAR(100) NOT NULL,
     address VARCHAR(500) NOT NULL,
-    is_active TINYINT DEFAULT 1
+    is_active TINYINT DEFAULT 1,
+    manager_id INT NULL,
+    FOREIGN KEY (manager_id) REFERENCES user(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 -- 4. STORAGE_LOCATION
@@ -152,18 +155,38 @@ CREATE TABLE manifest (
     trip_id INT NOT NULL,
     received_at DATETIME NULL,
     status VARCHAR(50) DEFAULT 'PENDING',
+    CONSTRAINT uq_manifest_station_trip UNIQUE (station_id, trip_id),
+    CONSTRAINT chk_manifest_status CHECK (status IN ('PENDING', 'RECEIVED')),
     FOREIGN KEY (station_id) REFERENCES station_store(station_id),
     FOREIGN KEY (trip_id) REFERENCES train_trip(trip_id)
 ) ENGINE=InnoDB;
 
--- 13. INVENTORY
+-- 13. INVENTORY (Feature 4.4 - one stock row per station + product)
 CREATE TABLE inventory (
     inventory_id INT AUTO_INCREMENT PRIMARY KEY,
-    order_item_id INT NOT NULL,
-    manifest_id INT NOT NULL,
-    stored_quantity INT NOT NULL,
-    FOREIGN KEY (order_item_id) REFERENCES order_item(order_item_id),
-    FOREIGN KEY (manifest_id) REFERENCES manifest(manifest_id) ON DELETE CASCADE
+    station_id INT NOT NULL,
+    product_id INT NOT NULL,
+    location_id INT NULL,
+    stored_quantity INT NOT NULL DEFAULT 0,
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_inventory_station_product UNIQUE (station_id, product_id),
+    CONSTRAINT chk_inventory_qty_nonneg CHECK (stored_quantity >= 0),
+    FOREIGN KEY (station_id) REFERENCES station_store(station_id),
+    FOREIGN KEY (product_id) REFERENCES product(product_id),
+    FOREIGN KEY (location_id) REFERENCES storage_location(location_id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- 13b. STOCK_ADJUSTMENT (Feature 4.4 - damaged / missing / manual stock changes)
+CREATE TABLE stock_adjustment (
+    adjustment_id INT AUTO_INCREMENT PRIMARY KEY,
+    inventory_id INT NOT NULL,
+    quantity_delta INT NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    adjusted_by INT NULL,
+    adjusted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_adjustment_nonzero CHECK (quantity_delta <> 0),
+    FOREIGN KEY (inventory_id) REFERENCES inventory(inventory_id),
+    FOREIGN KEY (adjusted_by) REFERENCES user(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 -- 14. TRUCK

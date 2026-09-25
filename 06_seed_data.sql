@@ -8,6 +8,7 @@ TRUNCATE TABLE delivery;
 TRUNCATE TABLE roster_assignment;
 TRUNCATE TABLE delivery_staff;
 TRUNCATE TABLE truck;
+TRUNCATE TABLE stock_adjustment;
 TRUNCATE TABLE inventory;
 TRUNCATE TABLE manifest;
 TRUNCATE TABLE rail_allocation;
