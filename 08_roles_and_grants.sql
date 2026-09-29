@@ -17,7 +17,7 @@ CREATE ROLE 'role_store_mgr';
 CREATE ROLE 'role_warehouse_staff';
 CREATE ROLE 'role_customer';
 
--- 2. Grant Privileges per RBAC Matrix (SRS §5.3)
+-- 2. Grant Privileges per RBAC Matrix (SRS 5.3)
 
       
 -- Role: SUPERADMIN (Unrestricted administrative access)
@@ -37,7 +37,7 @@ GRANT SELECT ON kandypack_db.order_item TO 'role_logistics_mgr';
 GRANT SELECT ON kandypack_db.rail_allocation TO 'role_logistics_mgr';
 GRANT SELECT ON kandypack_db.v_quarterly_sales TO 'role_logistics_mgr';
 GRANT SELECT ON kandypack_db.v_top_quarterly_items TO 'role_logistics_mgr';
-GRANT EXECUTE ON PROCEDURE kandypack_db.sp_schedule_train_order TO 'role_logistics_mgr';
+GRANT EXECUTE ON PROCEDURE kandypack_db.sp_allocate_rail_capacity TO 'role_logistics_mgr';
 
       
 -- Role: DISPATCHER (Truck roster scheduling, driver/assistant assignment)

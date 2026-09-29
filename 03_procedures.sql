@@ -284,4 +284,15 @@ PROC_BODY: BEGIN
     SET p_result_code = 'SUCCESS';
 END //
 
+-- PROCEDURE 3: Station Store Manifest Receipt (Member 4 / Store Manager)
+DROP PROCEDURE IF EXISTS sp_receive_manifest//
+CREATE PROCEDURE sp_receive_manifest(
+    IN p_manifest_id INT,
+    OUT p_result VARCHAR(50)
+)
+BEGIN
+    UPDATE manifest SET status = 'RECEIVED', received_at = NOW() WHERE manifest_id = p_manifest_id;
+    SET p_result = 'SUCCESS';
+END //
+
 DELIMITER ;

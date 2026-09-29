@@ -227,20 +227,7 @@ CREATE TABLE audit_log (
     FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- 19. STOCK_ADJUSTMENT (Feature 4.4 / Store Manager & Warehouse Staff)
-CREATE TABLE IF NOT EXISTS stock_adjustment (
-    adjustment_id INT AUTO_INCREMENT PRIMARY KEY,
-    station_id INT NOT NULL,
-    product_id INT NOT NULL,
-    quantity_adjusted INT NOT NULL,
-    reason VARCHAR(255) NOT NULL,
-    reported_by INT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (station_id) REFERENCES station_store(station_id) ON DELETE CASCADE,
-    FOREIGN KEY (product_id) REFERENCES product(product_id) ON DELETE CASCADE,
-    FOREIGN KEY (reported_by) REFERENCES user(user_id) ON DELETE SET NULL
-) ENGINE=InnoDB;
-
+     
 -- 2. VIEWS
      
 CREATE OR REPLACE VIEW v_available_drivers AS

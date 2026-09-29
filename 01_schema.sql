@@ -3,6 +3,7 @@ CREATE DATABASE IF NOT EXISTS kandypack_db;
 USE kandypack_db;
 
 -- Drop existing tables in reverse dependency order if resetting
+DROP TABLE IF EXISTS stock_adjustment;
 DROP TABLE IF EXISTS audit_log;
 DROP TABLE IF EXISTS delivery;
 DROP TABLE IF EXISTS roster_assignment;
@@ -225,4 +226,18 @@ CREATE TABLE audit_log (
     occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     entity_name VARCHAR(100) NOT NULL,
     FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- 19. STOCK_ADJUSTMENT (Feature 4.4 / Store Manager & Warehouse Staff)
+CREATE TABLE IF NOT EXISTS stock_adjustment (
+    adjustment_id INT AUTO_INCREMENT PRIMARY KEY,
+    station_id INT NOT NULL,
+    product_id INT NOT NULL,
+    quantity_adjusted INT NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    reported_by INT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (station_id) REFERENCES station_store(station_id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES product(product_id) ON DELETE CASCADE,
+    FOREIGN KEY (reported_by) REFERENCES user(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
