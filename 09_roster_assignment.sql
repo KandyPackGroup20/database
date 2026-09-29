@@ -1,36 +1,6 @@
 USE kandypack_db;
 
-CREATE TABLE roster_assignment_audit_detail (
-    roster_audit_detail_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    audit_id INT NOT NULL,
-    request_key VARCHAR(128) NOT NULL,
-    roster_id INT NULL,
-    route_id INT NOT NULL,
-    truck_id INT NOT NULL,
-    driver_id INT NOT NULL,
-    assistant_id INT NOT NULL,
-    start_time DATETIME NOT NULL,
-    end_time DATETIME NOT NULL,
-    duration_seconds BIGINT NOT NULL,
-    policy_id VARCHAR(50) NOT NULL,
-    outcome VARCHAR(50) NOT NULL,
-    reason_code VARCHAR(100) NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT uq_roster_audit_detail_audit UNIQUE (audit_id),
-    CONSTRAINT uq_roster_audit_detail_request UNIQUE (request_key),
-    CONSTRAINT fk_roster_audit_detail_audit
-        FOREIGN KEY (audit_id) REFERENCES audit_log(audit_id) ON DELETE RESTRICT,
-    CONSTRAINT fk_roster_audit_detail_roster
-        FOREIGN KEY (roster_id) REFERENCES roster_assignment(roster_id),
-    CONSTRAINT chk_roster_audit_detail_interval CHECK (end_time > start_time),
-    CONSTRAINT chk_roster_audit_detail_duration CHECK (duration_seconds > 0),
-    CONSTRAINT chk_roster_audit_detail_outcome CHECK (outcome IN ('ACCEPTED', 'REJECTED')),
-    CONSTRAINT chk_roster_audit_detail_result CHECK (
-        (outcome = 'ACCEPTED' AND roster_id IS NOT NULL AND reason_code IS NULL)
-        OR (outcome = 'REJECTED' AND roster_id IS NULL AND reason_code IS NOT NULL)
-    )
-) ENGINE=InnoDB;
-
+-- Accepted audit rows reference the immutable assignment request in the base schema.
 ALTER TABLE roster_assignment
     ADD CONSTRAINT chk_roster_assignment_interval CHECK (end_time > start_time),
     ADD CONSTRAINT chk_roster_assignment_people CHECK (driver_id <> assistant_id);
@@ -42,20 +12,25 @@ CREATE INDEX idx_roster_driver_window
 CREATE INDEX idx_roster_assistant_window
     ON roster_assignment (assistant_id, status, start_time, end_time);
 
-DELIMITER $$
-CREATE TRIGGER trg_roster_audit_detail_no_update
-BEFORE UPDATE ON roster_assignment_audit_detail
+-- Status may evolve, but retries and accepted history must retain the request.
+DELIMITER //
+DROP TRIGGER IF EXISTS trg_roster_assignment_request_immutable//
+CREATE TRIGGER trg_roster_assignment_request_immutable
+BEFORE UPDATE ON roster_assignment
 FOR EACH ROW
 BEGIN
-    SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'Roster assignment audit details are immutable';
-END$$
-
-CREATE TRIGGER trg_roster_audit_detail_no_delete
-BEFORE DELETE ON roster_assignment_audit_detail
-FOR EACH ROW
-BEGIN
-    SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'Roster assignment audit details are immutable';
-END$$
+    IF NOT (OLD.roster_id <=> NEW.roster_id)
+       OR NOT (OLD.request_key <=> NEW.request_key)
+       OR NOT (OLD.route_id <=> NEW.route_id)
+       OR NOT (OLD.truck_id <=> NEW.truck_id)
+       OR NOT (OLD.driver_id <=> NEW.driver_id)
+       OR NOT (OLD.assistant_id <=> NEW.assistant_id)
+       OR NOT (OLD.dispatcher_id <=> NEW.dispatcher_id)
+       OR NOT (OLD.start_time <=> NEW.start_time)
+       OR NOT (OLD.end_time <=> NEW.end_time)
+       OR NOT (OLD.created_at <=> NEW.created_at) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Roster assignment request facts are immutable';
+    END IF;
+END //
 DELIMITER ;

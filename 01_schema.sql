@@ -187,6 +187,9 @@ CREATE TABLE delivery_staff (
 -- 16. ROSTER_ASSIGNMENT
 CREATE TABLE roster_assignment (
     roster_id INT AUTO_INCREMENT PRIMARY KEY,
+    request_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
+    CONSTRAINT uq_roster_assignment_request_key UNIQUE (request_key),
+    CONSTRAINT chk_roster_assignment_request_key CHECK (CHAR_LENGTH(request_key) > 0),
     route_id INT NOT NULL,
     truck_id INT NOT NULL,
     driver_id INT NOT NULL,
@@ -224,5 +227,18 @@ CREATE TABLE audit_log (
     outcome VARCHAR(50) NOT NULL,
     occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     entity_name VARCHAR(100) NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE CASCADE
+    -- Unrelated column audit inserts leave the roster NULL.
+    roster_id INT NULL,
+    CONSTRAINT uq_audit_log_roster UNIQUE (roster_id),
+    INDEX idx_audit_log_action_time (action, occurred_at DESC, audit_id DESC),
+    INDEX idx_audit_log_user (user_id),
+    CONSTRAINT fk_audit_log_user FOREIGN KEY (user_id) REFERENCES user(user_id),
+    CONSTRAINT fk_audit_log_roster FOREIGN KEY (roster_id) REFERENCES roster_assignment(roster_id),
+    CONSTRAINT chk_audit_log_roster_accepted CHECK (
+        roster_id IS NULL OR (
+            action = 'ASSIGN_ROSTER' AND outcome = 'ACCEPTED'
+            AND entity_name = 'roster_assignment' AND entity_id = roster_id
+            AND occurred_at IS NOT NULL
+        )
+    )
 ) ENGINE=InnoDB;

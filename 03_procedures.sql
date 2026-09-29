@@ -161,6 +161,7 @@ CREATE PROCEDURE sp_assign_truck_roster(
     OUT p_result_code VARCHAR(50)
 )
 PROC_BODY: BEGIN
+    DECLARE v_roster_id INT;
     DECLARE v_overlap_count INT DEFAULT 0;
     DECLARE v_driver_hours DECIMAL(5,2);
     DECLARE v_assistant_hours DECIMAL(5,2);
@@ -172,8 +173,6 @@ PROC_BODY: BEGIN
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'ASSIGN_ROSTER', p_route_id, 'SYSTEM_ERROR', 'roster_assignment');
         SET p_result_code = 'SYSTEM_ERROR';
     END;
 
@@ -193,8 +192,6 @@ PROC_BODY: BEGIN
 
     IF v_overlap_count > 0 THEN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'REJECTED_CHECK_A_OVERLAP', p_route_id, 'FAILURE', 'roster_assignment');
         SET p_result_code = 'REJECTED_CHECK_A_OVERLAP';
         LEAVE PROC_BODY;
     END IF;
@@ -207,8 +204,6 @@ PROC_BODY: BEGIN
 
     IF v_driver_last_end IS NOT NULL AND TIMESTAMPDIFF(HOUR, v_driver_last_end, p_start_time) < 8 THEN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'REJECTED_CHECK_B_DRIVER_REST', p_route_id, 'FAILURE', 'roster_assignment');
         SET p_result_code = 'REJECTED_CHECK_B_DRIVER_REST';
         LEAVE PROC_BODY;
     END IF;
@@ -239,8 +234,6 @@ PROC_BODY: BEGIN
 
     IF v_assistant_consec_count >= 2 THEN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'REJECTED_CHECK_C_ASSISTANT_REST', p_route_id, 'FAILURE', 'roster_assignment');
         SET p_result_code = 'REJECTED_CHECK_C_ASSISTANT_REST';
         LEAVE PROC_BODY;
     END IF;
@@ -248,23 +241,20 @@ PROC_BODY: BEGIN
     -- CHECK D: Weekly Working Hour Caps (FR-4.3.7 - Driver: 40h, Assistant: 60h)
     IF (v_driver_hours + p_duration_hours) > 40.00 THEN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'REJECTED_CHECK_D_DRIVER_HOURS_EXCEEDED', p_route_id, 'FAILURE', 'roster_assignment');
         SET p_result_code = 'REJECTED_CHECK_D_DRIVER_HOURS_EXCEEDED';
         LEAVE PROC_BODY;
     END IF;
 
     IF (v_assistant_hours + p_duration_hours) > 60.00 THEN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'REJECTED_CHECK_D_ASSISTANT_HOURS_EXCEEDED', p_route_id, 'FAILURE', 'roster_assignment');
         SET p_result_code = 'REJECTED_CHECK_D_ASSISTANT_HOURS_EXCEEDED';
         LEAVE PROC_BODY;
     END IF;
 
     -- ALL CHECKS PASSED: Commit Roster Assignment
-    INSERT INTO roster_assignment(route_id, truck_id, driver_id, assistant_id, dispatcher_id, start_time, end_time, status)
-    VALUES (p_route_id, p_truck_id, p_driver_id, p_assistant_id, p_dispatcher_id, p_start_time, p_end_time, 'SCHEDULED');
+    INSERT INTO roster_assignment(request_key, route_id, truck_id, driver_id, assistant_id, dispatcher_id, start_time, end_time, status)
+    VALUES (UUID(), p_route_id, p_truck_id, p_driver_id, p_assistant_id, p_dispatcher_id, p_start_time, p_end_time, 'SCHEDULED');
+    SET v_roster_id = LAST_INSERT_ID();
 
     -- Update Driver Accumulators
     UPDATE delivery_staff
@@ -277,8 +267,8 @@ PROC_BODY: BEGIN
     WHERE delivery_staff_id = p_assistant_id;
 
     -- Audit Log Entry for Success
-    INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-    VALUES (p_dispatcher_id, 'ASSIGN_ROSTER', p_route_id, 'SUCCESS', 'roster_assignment');
+    INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name, roster_id)
+    VALUES (p_dispatcher_id, 'ASSIGN_ROSTER', v_roster_id, 'ACCEPTED', 'roster_assignment', v_roster_id);
 
     COMMIT;
     SET p_result_code = 'SUCCESS';
