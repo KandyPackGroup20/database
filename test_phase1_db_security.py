@@ -8,25 +8,40 @@ Covers:
 import sys
 import os
 
+def resolve_sql_path(filename: str) -> str:
+    """Finds SQL file whether executed from monorepo root or database repo root."""
+    base = os.path.basename(filename)
+    candidates = [
+        base,
+        os.path.join("database", base),
+        os.path.join(os.path.dirname(__file__), base),
+        os.path.join(os.path.dirname(__file__), "..", "database", base),
+        filename
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    raise FileNotFoundError(f"Could not locate SQL file: {filename}")
+
 def test_static_validation():
     print("STEP 1: STATIC SQL SYNTAX & POLICY VALIDATION")
 
     # 1. Schema
-    with open("database/01_schema.sql", "r", encoding="utf-8") as f:
+    with open(resolve_sql_path("01_schema.sql"), "r", encoding="utf-8") as f:
         schema = f.read()
     assert "CREATE TABLE user" in schema, "Missing 'user' table definition"
     assert "force_password_reset" in schema, "Missing 'force_password_reset' column"
     print("Schema DDL verified (user & customer tables).")
 
     # 2. Views
-    with open("database/02_views.sql", "r", encoding="utf-8") as f:
+    with open(resolve_sql_path("02_views.sql"), "r", encoding="utf-8") as f:
         views = f.read()
     for v in ["v_available_drivers", "v_available_assistants", "v_station_inventory", "v_incoming_train_manifests", "v_customer_orders", "v_quarterly_sales"]:
         assert v in views, f"Missing view {v}"
         print(f"Role-scoping View verified: {v}")
 
     # 3. Triggers
-    with open("database/04_triggers.sql", "r", encoding="utf-8") as f:
+    with open(resolve_sql_path("04_triggers.sql"), "r", encoding="utf-8") as f:
         triggers = f.read()
     assert "trg_user_account_creation_policy" in triggers, "Missing account creation trigger"
     assert "force_password_reset = 1" in triggers, "Trigger must force password reset"
@@ -34,13 +49,14 @@ def test_static_validation():
     print("Security Trigger (trg_user_account_creation_policy) verified.")
 
     # 4. RBAC Roles
-    with open("database/08_roles_and_grants.sql", "r", encoding="utf-8") as f:
+    with open(resolve_sql_path("08_roles_and_grants.sql"), "r", encoding="utf-8") as f:
         rbac = f.read()
     for r in ["role_superadmin", "role_logistics_mgr", "role_dispatcher", "role_store_mgr", "role_warehouse_staff", "role_customer"]:
         assert r in rbac, f"Missing RBAC role {r}"
         print(f"MySQL RBAC Role definition verified: {r}")
 
     print("\n  >>> STATIC TEST PASSED SUCCESSFULLY! <<<\n")
+
 
 
 def test_live_database():
