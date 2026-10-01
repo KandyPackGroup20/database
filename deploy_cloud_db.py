@@ -141,16 +141,7 @@ def main():
             rbac_file = os.path.join(base_dir, "08_roles_and_grants.sql")
             execute_sql_file(cursor, rbac_file, "RBAC Roles & Grants Script")
 
-    print("\n" + "=" * 70)
-    print(" SUCCESS! Cloud MySQL database is fully initialized and live!")
-    print("   • 19 Normalized InnoDB Tables")
-    print("   • 8 Database Views (Scoping & Analytics)")
-    print("   • Stored Procedures (Multi-Trip Rail Spillover & Truck Roster)")
-    print("   • Security Triggers (Immutable Audit Logs & Domain Policies)")
-    print("   • Composite B-Tree Indexes")
-    print("   • Demo Seed Data (Users, Products, Routes, Staff)")
-    print("   • MySQL 8 RBAC Roles (SUPERADMIN, DISPATCHER, CUSTOMER, etc.)")
-    print("=" * 70)
+    print("\nCloud MySQL database initialized successfully.")
 
 if __name__ == "__main__":
     main()

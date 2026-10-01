@@ -43,9 +43,7 @@ except ImportError:
 
 
 def print_header(title):
-    print("\n" + "=" * 80)
-    print(f"  {title}")
-    print("=" * 80)
+    print(f"\n--- {title} ---")
 
 def test_1_sqli_neutralization():
     print_header("DEMO 1: SQL INJECTION NEUTRALIZATION (PREPARED STATEMENT DISCIPLINE)")
@@ -155,18 +153,14 @@ def test_4_jwt_edge_middleware():
 
 
 def run_all_viva_tests():
-    print("\n" + "#" * 80)
-    print("#  DEMONSTRATION SUITE - ")
-    print("#" * 80)
+    print("\nRunning security tests...")
     
     test_1_sqli_neutralization()
     test_2_trigger_policy_enforcement()
     test_3_rbac_isolation()
     test_4_jwt_edge_middleware()
     
-    print("\n" + "#" * 80)
-    print("#  ALL 4 SECURITY & CONCURRENCY DEMONSTRATIONS PASSED (100%)")
-    print("#" * 80 + "\n")
+    print("\nAll security tests passed.\n")
 
 
 if __name__ == "__main__":

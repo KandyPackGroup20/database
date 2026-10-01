@@ -140,10 +140,7 @@ def test_live_database():
             # Clean up test row
             cursor.execute("DELETE FROM user WHERE email = %s", (test_email,))
             conn.commit()
-
-    print("\n" + "=" * 70)
-    print(">>> ALL LIVE MYSQL TESTS PASSED! READY FOR VIVA DEFENSE! <<<")
-    print("=" * 70)
+    print("\nLive database tests passed successfully.")
 
 
 if __name__ == "__main__":
