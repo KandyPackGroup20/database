@@ -156,7 +156,7 @@ def test_4_jwt_edge_middleware():
 
 def run_all_viva_tests():
     print("\n" + "#" * 80)
-    print("#  CS3043 VIVA DEMONSTRATION SUITE - ")
+    print("#  DEMONSTRATION SUITE - ")
     print("#" * 80)
     
     test_1_sqli_neutralization()
@@ -165,7 +165,7 @@ def run_all_viva_tests():
     test_4_jwt_edge_middleware()
     
     print("\n" + "#" * 80)
-    print("#  ALL 4 VIVA SECURITY & CONCURRENCY DEMONSTRATIONS PASSED (100%)")
+    print("#  ALL 4 SECURITY & CONCURRENCY DEMONSTRATIONS PASSED (100%)")
     print("#" * 80 + "\n")
 
 

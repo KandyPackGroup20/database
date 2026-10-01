@@ -96,14 +96,14 @@ def test_live_database():
             # TEST A: Test Account-Creation Trigger (Auto force_password_reset)
                    
             print("\n  [TEST A] Testing Trigger: Inserting Staff User...")
-            test_email = "test.staff.viva@kandypack.lk"
+            test_email = "test.staff@kandypack.lk"
             cursor.execute("DELETE FROM user WHERE email = %s", (test_email,))
             conn.commit()
 
             cursor.execute("""
                 INSERT INTO user (name, role, email, password_hash)
                 VALUES (%s, %s, %s, %s)
-            """, ('Viva Staff Test', 'DISPATCHER', test_email, 'hash123'))
+            """, ('Staff Test', 'DISPATCHER', test_email, 'hash123'))
             conn.commit()
 
             cursor.execute("SELECT force_password_reset, role FROM user WHERE email = %s", (test_email,))

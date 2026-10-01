@@ -44,7 +44,7 @@ def execute_roster_assignment(dispatcher_id, thread_id):
 
 async def main():
     print("=" * 60)
-    print("KANDYPACK VIVA DEMO: SIMULTANEOUS DISPATCH CONCURRENCY TEST")
+    print("KANDYPACK DEMO: SIMULTANEOUS DISPATCH CONCURRENCY TEST")
     print("Simulating 5 dispatchers attempting to book Driver D-102 at the exact same second...")
     print("=" * 60)
 
