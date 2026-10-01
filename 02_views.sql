@@ -44,6 +44,7 @@ WHERE u.role = 'DRIVER';
 -- 4. Station Warehouse Stock Inventory View (Feature 4.1 / 4.4)
 CREATE OR REPLACE VIEW v_station_inventory AS
 SELECT 
+    inv.inventory_id,
     ss.station_id,
     ss.city AS station_city,
     p.product_id,
@@ -52,13 +53,12 @@ SELECT
     p.space_consumption_rate,
     inv.stored_quantity,
     sl.location_code AS bin_code,
-    sl.location_type AS bin_type
+    sl.location_type AS bin_type,
+    inv.last_updated
 FROM inventory inv
-JOIN order_item oi ON inv.order_item_id = oi.order_item_id
-JOIN product p ON oi.product_id = p.product_id
-JOIN manifest m ON inv.manifest_id = m.manifest_id
-JOIN station_store ss ON m.station_id = ss.station_id
-LEFT JOIN storage_location sl ON ss.station_id = sl.station_id;
+JOIN station_store ss ON inv.station_id = ss.station_id
+JOIN product p ON inv.product_id = p.product_id
+LEFT JOIN storage_location sl ON inv.location_id = sl.location_id;
 
 -- 5. Incoming Train Manifests View (Feature 4.1 / 4.4)
 CREATE OR REPLACE VIEW v_incoming_train_manifests AS
