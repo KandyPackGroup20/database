@@ -128,3 +128,23 @@ FROM customer_order co
 JOIN order_item oi ON co.order_id = oi.order_id
 JOIN product p ON oi.product_id = p.product_id
 GROUP BY YEAR(co.order_date), QUARTER(co.order_date), p.product_id, p.product_name;
+
+-- 9. Pending Rail Orders View (Feature 4.2 / Rail Capacity Allocation)
+CREATE OR REPLACE VIEW v_pending_rail_orders AS
+SELECT 
+    co.order_id,
+    co.customer_id,
+    c.customer_name,
+    dr.route_id,
+    dr.route_name,
+    ss.station_id,
+    ss.city AS destination_hub,
+    co.order_date,
+    co.delivery_date,
+    co.status AS order_status,
+    co.created_at
+FROM customer_order co
+JOIN customer c ON co.customer_id = c.customer_id
+LEFT JOIN delivery_route dr ON c.route_id = dr.route_id
+LEFT JOIN station_store ss ON dr.station_id = ss.station_id
+WHERE co.status = 'PENDING_RAIL_SCHEDULING';
