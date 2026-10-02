@@ -53,3 +53,26 @@ BEGIN
 END //
 
 DELIMITER ;
+
+-- Status may evolve, but retries and accepted history must retain the request.
+DELIMITER //
+DROP TRIGGER IF EXISTS trg_roster_assignment_request_immutable//
+CREATE TRIGGER trg_roster_assignment_request_immutable
+BEFORE UPDATE ON roster_assignment
+FOR EACH ROW
+BEGIN
+    IF NOT (OLD.roster_id <=> NEW.roster_id)
+       OR NOT (OLD.request_key <=> NEW.request_key)
+       OR NOT (OLD.route_id <=> NEW.route_id)
+       OR NOT (OLD.truck_id <=> NEW.truck_id)
+       OR NOT (OLD.driver_id <=> NEW.driver_id)
+       OR NOT (OLD.assistant_id <=> NEW.assistant_id)
+       OR NOT (OLD.dispatcher_id <=> NEW.dispatcher_id)
+       OR NOT (OLD.start_time <=> NEW.start_time)
+       OR NOT (OLD.end_time <=> NEW.end_time)
+       OR NOT (OLD.created_at <=> NEW.created_at) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Roster assignment request facts are immutable';
+    END IF;
+END //
+DELIMITER ;

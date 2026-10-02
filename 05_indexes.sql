@@ -16,3 +16,11 @@ ON roster_assignment (status, start_time, end_time, truck_id, driver_id, assista
 -- 4. Optimizing storage location search
 CREATE INDEX idx_storage_loc_search 
 ON storage_location (station_id, location_code);
+
+--roster indexes
+CREATE INDEX idx_roster_truck_window
+    ON roster_assignment (truck_id, status, start_time, end_time);
+CREATE INDEX idx_roster_driver_window
+    ON roster_assignment (driver_id, status, start_time, end_time);
+CREATE INDEX idx_roster_assistant_window
+    ON roster_assignment (assistant_id, status, start_time, end_time);

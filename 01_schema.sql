@@ -206,6 +206,11 @@ CREATE TABLE roster_assignment (
     FOREIGN KEY (dispatcher_id) REFERENCES user(user_id)
 ) ENGINE=InnoDB;
 
+-- Accepted audit rows reference the immutable assignment request in the base schema.
+ALTER TABLE roster_assignment
+    ADD CONSTRAINT chk_roster_assignment_interval CHECK (end_time > start_time),
+    ADD CONSTRAINT chk_roster_assignment_people CHECK (driver_id <> assistant_id);
+    
 -- 17. DELIVERY
 CREATE TABLE delivery (
     delivery_id INT AUTO_INCREMENT PRIMARY KEY,
