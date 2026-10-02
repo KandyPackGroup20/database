@@ -27,10 +27,10 @@ def execute_roster_assignment(dispatcher_id, thread_id):
         print(f"[Thread {thread_id}] Attempting roster booking for Driver D-102...")
         result_args = cursor.callproc('sp_assign_truck_roster', args)
         
-        # Fetch OUT parameter
-        cursor.execute("SELECT @result_code AS result;")
-        result = cursor.fetchone()
-        res_code = result[0] if result else 'UNKNOWN'
+       
+        # OUT parameter is the last argument returned by callproc
+        res_code = result_args[-1]
+       
         
         conn.commit()
         cursor.close()
