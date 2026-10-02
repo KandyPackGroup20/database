@@ -76,6 +76,23 @@ FROM manifest m
 JOIN train_trip tt ON m.trip_id = tt.trip_id
 JOIN station_store ss ON m.station_id = ss.station_id;
 
+-- 5b. Incoming Train Cargo Items View (Feature 4.4 - Store Manager Cargo Inspection)
+CREATE OR REPLACE VIEW v_trip_manifest_items AS
+SELECT 
+    ra.trip_id,
+    ra.order_item_id,
+    oi.order_id,
+    p.product_id,
+    p.product_name,
+    ra.allocated_quantity,
+    ra.allocated_space,
+    p.space_consumption_rate,
+    tt.destination_station_id AS station_id
+FROM rail_allocation ra
+JOIN order_item oi ON ra.order_item_id = oi.order_item_id
+JOIN product p ON oi.product_id = p.product_id
+JOIN train_trip tt ON ra.trip_id = tt.trip_id;
+
 -- 6. Customer Orders View (Feature 4.1 - Customer Portal scoping)
 CREATE OR REPLACE VIEW v_customer_orders AS
 SELECT 
