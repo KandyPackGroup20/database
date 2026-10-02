@@ -145,3 +145,24 @@ FROM customer_order co
 JOIN order_item oi ON co.order_id = oi.order_id
 JOIN product p ON oi.product_id = p.product_id
 GROUP BY YEAR(co.order_date), QUARTER(co.order_date), p.product_id, p.product_name;
+
+-- 9. Station Inventory & Stock Adjustment Summary View (Feature 4.4 / Report 6)
+CREATE OR REPLACE VIEW v_stock_adjustment_summary AS
+SELECT 
+    ss.station_id,
+    ss.city AS station_city,
+    p.product_id,
+    p.product_name,
+    p.unit_price,
+    sa.reason,
+    COUNT(sa.adjustment_id) AS total_adjustment_events,
+    SUM(sa.quantity_delta) AS net_quantity_delta,
+    SUM(CASE WHEN sa.quantity_delta < 0 THEN ABS(sa.quantity_delta) ELSE 0 END) AS total_units_damaged_or_lost,
+    SUM(CASE WHEN sa.quantity_delta < 0 THEN ABS(sa.quantity_delta) * p.unit_price ELSE 0.00 END) AS total_loss_value,
+    MIN(sa.adjusted_at) AS first_adjustment_at,
+    MAX(sa.adjusted_at) AS latest_adjustment_at
+FROM stock_adjustment sa
+JOIN inventory inv ON sa.inventory_id = inv.inventory_id
+JOIN station_store ss ON inv.station_id = ss.station_id
+JOIN product p ON inv.product_id = p.product_id
+GROUP BY ss.station_id, ss.city, p.product_id, p.product_name, p.unit_price, sa.reason;

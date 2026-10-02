@@ -37,6 +37,7 @@ GRANT SELECT ON kandypack_db.order_item TO 'role_logistics_mgr';
 GRANT SELECT ON kandypack_db.rail_allocation TO 'role_logistics_mgr';
 GRANT SELECT ON kandypack_db.v_quarterly_sales TO 'role_logistics_mgr';
 GRANT SELECT ON kandypack_db.v_top_quarterly_items TO 'role_logistics_mgr';
+GRANT SELECT ON kandypack_db.v_stock_adjustment_summary TO 'role_logistics_mgr';
 GRANT EXECUTE ON PROCEDURE kandypack_db.sp_schedule_train_order TO 'role_logistics_mgr';
 
       
@@ -65,6 +66,7 @@ GRANT SELECT, INSERT ON kandypack_db.stock_adjustment TO 'role_store_mgr';
 GRANT SELECT ON kandypack_db.v_station_inventory TO 'role_store_mgr';
 GRANT SELECT ON kandypack_db.v_incoming_train_manifests TO 'role_store_mgr';
 GRANT SELECT ON kandypack_db.v_trip_manifest_items TO 'role_store_mgr';
+GRANT SELECT ON kandypack_db.v_stock_adjustment_summary TO 'role_store_mgr';
 GRANT EXECUTE ON PROCEDURE kandypack_db.sp_receive_manifest TO 'role_store_mgr';
 
       
