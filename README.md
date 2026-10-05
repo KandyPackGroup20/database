@@ -7,7 +7,7 @@ Run these commands in PowerShell from the `database` folder. The scripts use MyS
 Use a disposable MySQL instance. The master script resets the database, so do not run it against a database with data you need to keep.
 
 ```powershell
-Set-Location C:\Users\Praghathees\Desktop\Kandypack\database
+Set-Location Set-Location "your location" (C:\Users)
 mysql --no-defaults --protocol=TCP --host=127.0.0.1 --port=33327 --user=root --password --execute='SOURCE 00_master_init.sql'
 ```
 
