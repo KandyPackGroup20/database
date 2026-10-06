@@ -187,6 +187,9 @@ CREATE TABLE delivery_staff (
 -- 16. ROSTER_ASSIGNMENT
 CREATE TABLE roster_assignment (
     roster_id INT AUTO_INCREMENT PRIMARY KEY,
+    request_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
+    CONSTRAINT uq_roster_assignment_request_key UNIQUE (request_key),
+    CONSTRAINT chk_roster_assignment_request_key CHECK (CHAR_LENGTH(request_key) > 0),
     route_id INT NOT NULL,
     truck_id INT NOT NULL,
     driver_id INT NOT NULL,
@@ -224,7 +227,20 @@ CREATE TABLE audit_log (
     outcome VARCHAR(50) NOT NULL,
     occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     entity_name VARCHAR(100) NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE CASCADE
+    -- Unrelated explicit-column audit inserts leave the roster link NULL.
+    roster_id INT NULL,
+    CONSTRAINT uq_audit_log_roster UNIQUE (roster_id),
+    INDEX idx_audit_log_action_time (action, occurred_at DESC, audit_id DESC),
+    INDEX idx_audit_log_user (user_id),
+    CONSTRAINT fk_audit_log_user FOREIGN KEY (user_id) REFERENCES user(user_id),
+    CONSTRAINT fk_audit_log_roster FOREIGN KEY (roster_id) REFERENCES roster_assignment(roster_id),
+    CONSTRAINT chk_audit_log_roster_accepted CHECK (
+        roster_id IS NULL OR (
+            action = 'ASSIGN_ROSTER' AND outcome = 'ACCEPTED'
+            AND entity_name = 'roster_assignment' AND entity_id = roster_id
+            AND occurred_at IS NOT NULL
+        )
+    )
 ) ENGINE=InnoDB;
 
 -- 19. STOCK_ADJUSTMENT (Feature 4.4 / Store Manager & Warehouse Staff)
@@ -344,7 +360,7 @@ PROC_BODY: BEGIN
         FROM order_item oi
         JOIN product p ON oi.product_id = p.product_id
         WHERE oi.order_id = p_order_id;
-        
+
     DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
@@ -451,6 +467,7 @@ CREATE PROCEDURE sp_assign_truck_roster(
     IN p_start_time DATETIME, IN p_end_time DATETIME, IN p_duration_hours DECIMAL(4,2), OUT p_result_code VARCHAR(50)
 )
 PROC_BODY: BEGIN
+    DECLARE v_roster_id INT;
     DECLARE v_overlap_count INT DEFAULT 0;
     DECLARE v_driver_hours DECIMAL(5,2);
     DECLARE v_assistant_hours DECIMAL(5,2);
@@ -461,8 +478,6 @@ PROC_BODY: BEGIN
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'ASSIGN_ROSTER', p_route_id, 'SYSTEM_ERROR', 'roster_assignment');
         SET p_result_code = 'SYSTEM_ERROR';
     END;
 
@@ -480,8 +495,6 @@ PROC_BODY: BEGIN
 
     IF v_overlap_count > 0 THEN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'REJECTED_CHECK_A_OVERLAP', p_route_id, 'FAILURE', 'roster_assignment');
         SET p_result_code = 'REJECTED_CHECK_A_OVERLAP';
         LEAVE PROC_BODY;
     END IF;
@@ -492,8 +505,6 @@ PROC_BODY: BEGIN
 
     IF v_driver_last_end IS NOT NULL AND TIMESTAMPDIFF(HOUR, v_driver_last_end, p_start_time) < 8 THEN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'REJECTED_CHECK_B_DRIVER_REST', p_route_id, 'FAILURE', 'roster_assignment');
         SET p_result_code = 'REJECTED_CHECK_B_DRIVER_REST';
         LEAVE PROC_BODY;
     END IF;
@@ -517,36 +528,31 @@ PROC_BODY: BEGIN
 
     IF v_assistant_consec_count >= 2 THEN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'REJECTED_CHECK_C_ASSISTANT_REST', p_route_id, 'FAILURE', 'roster_assignment');
         SET p_result_code = 'REJECTED_CHECK_C_ASSISTANT_REST';
         LEAVE PROC_BODY;
     END IF;
 
     IF (v_driver_hours + p_duration_hours) > 40.00 THEN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'REJECTED_CHECK_D_DRIVER_HOURS_EXCEEDED', p_route_id, 'FAILURE', 'roster_assignment');
         SET p_result_code = 'REJECTED_CHECK_D_DRIVER_HOURS_EXCEEDED';
         LEAVE PROC_BODY;
     END IF;
 
     IF (v_assistant_hours + p_duration_hours) > 60.00 THEN
         ROLLBACK;
-        INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-        VALUES (p_dispatcher_id, 'REJECTED_CHECK_D_ASSISTANT_HOURS_EXCEEDED', p_route_id, 'FAILURE', 'roster_assignment');
         SET p_result_code = 'REJECTED_CHECK_D_ASSISTANT_HOURS_EXCEEDED';
         LEAVE PROC_BODY;
     END IF;
 
-    INSERT INTO roster_assignment(route_id, truck_id, driver_id, assistant_id, dispatcher_id, start_time, end_time, status)
-    VALUES (p_route_id, p_truck_id, p_driver_id, p_assistant_id, p_dispatcher_id, p_start_time, p_end_time, 'SCHEDULED');
+    INSERT INTO roster_assignment(request_key, route_id, truck_id, driver_id, assistant_id, dispatcher_id, start_time, end_time, status)
+    VALUES (UUID(), p_route_id, p_truck_id, p_driver_id, p_assistant_id, p_dispatcher_id, p_start_time, p_end_time, 'SCHEDULED');
+    SET v_roster_id = LAST_INSERT_ID();
 
     UPDATE delivery_staff SET work_hours = work_hours + p_duration_hours WHERE delivery_staff_id = p_driver_id;
     UPDATE delivery_staff SET work_hours = work_hours + p_duration_hours WHERE delivery_staff_id = p_assistant_id;
 
-    INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name)
-    VALUES (p_dispatcher_id, 'ASSIGN_ROSTER', p_route_id, 'SUCCESS', 'roster_assignment');
+    INSERT INTO audit_log(user_id, action, entity_id, outcome, entity_name, roster_id)
+    VALUES (p_dispatcher_id, 'ASSIGN_ROSTER', v_roster_id, 'ACCEPTED', 'roster_assignment', v_roster_id);
 
     COMMIT;
     SET p_result_code = 'SUCCESS';
@@ -560,6 +566,34 @@ CREATE TRIGGER trg_prevent_audit_log_modification BEFORE UPDATE ON audit_log FOR
 
 DROP TRIGGER IF EXISTS trg_prevent_audit_log_deletion//
 CREATE TRIGGER trg_prevent_audit_log_deletion BEFORE DELETE ON audit_log FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'SECURITY VIOLATION: Audit logs immutable'; END //
+
+DROP TRIGGER IF EXISTS trg_user_account_creation_policy//
+CREATE TRIGGER trg_user_account_creation_policy
+BEFORE INSERT ON user
+FOR EACH ROW
+BEGIN
+    -- Force staff accounts to reset password on first login
+    IF NEW.role != 'CUSTOMER' THEN
+        SET NEW.force_password_reset = 1;
+
+        -- Enforce company domain for internal staff roles
+        IF NEW.email NOT LIKE '%@kandypack.lk' THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'SECURITY POLICY VIOLATION: Internal staff users must have an email ending with @kandypack.lk';
+        END IF;
+    ELSE
+        -- Customers default to not forcing reset unless explicitly specified
+        IF NEW.force_password_reset IS NULL THEN
+            SET NEW.force_password_reset = 0;
+        END IF;
+    END IF;
+
+    -- Validate role is in allowed set
+    IF NEW.role NOT IN ('SUPERADMIN', 'LOGISTICS_MGR', 'DISPATCHER', 'STORE_MGR', 'WAREHOUSE_STAFF', 'DRIVER', 'ASSISTANT', 'CUSTOMER') THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'SECURITY POLICY VIOLATION: Invalid user role specified.';
+    END IF;
+END //
 
 DELIMITER ;
 
@@ -643,3 +677,8 @@ INSERT INTO delivery_staff (delivery_staff_id, user_id, license_number, work_hou
 (4, 9, 'LIC-A-201', 45.00),
 (5, 10, 'LIC-A-202', 58.00),
 (6, 11, 'LIC-A-203', 33.00);
+
+-- MySQL client includes; run this script from the database directory.
+SOURCE 02_views.sql
+SOURCE 09_roster_assignment.sql
+SOURCE 10_roster_reporting.sql

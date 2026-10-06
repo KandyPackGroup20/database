@@ -43,7 +43,8 @@ WHERE u.role = 'DRIVER';
 
 -- 4. Station Warehouse Stock Inventory View (Feature 4.1 / 4.4)
 CREATE OR REPLACE VIEW v_station_inventory AS
-SELECT 
+SELECT
+    inv.inventory_id,
     ss.station_id,
     ss.city AS station_city,
     p.product_id,
@@ -54,11 +55,16 @@ SELECT
     sl.location_code AS bin_code,
     sl.location_type AS bin_type
 FROM inventory inv
-JOIN order_item oi ON inv.order_item_id = oi.order_item_id
-JOIN product p ON oi.product_id = p.product_id
-JOIN manifest m ON inv.manifest_id = m.manifest_id
-JOIN station_store ss ON m.station_id = ss.station_id
-LEFT JOIN storage_location sl ON ss.station_id = sl.station_id;
+JOIN order_item oi
+    ON inv.order_item_id = oi.order_item_id
+JOIN product p
+    ON oi.product_id = p.product_id
+JOIN manifest m
+    ON inv.manifest_id = m.manifest_id
+JOIN station_store ss
+    ON m.station_id = ss.station_id
+LEFT JOIN storage_location sl
+    ON ss.station_id = sl.station_id;
 
 -- 5. Incoming Train Manifests View (Feature 4.1 / 4.4)
 CREATE OR REPLACE VIEW v_incoming_train_manifests AS
@@ -128,3 +134,19 @@ FROM customer_order co
 JOIN order_item oi ON co.order_id = oi.order_id
 JOIN product p ON oi.product_id = p.product_id
 GROUP BY YEAR(co.order_date), QUARTER(co.order_date), p.product_id, p.product_name;
+
+-- 9. Train Trip Capacity Usage View (Feature 4.2 / Rail Logistics)
+CREATE OR REPLACE VIEW v_trip_capacity_usage AS
+SELECT 
+    tt.trip_id,
+    tt.origin_station_id,
+    tt.destination_station_id,
+    tt.departure_datetime,
+    tt.status,
+    tt.total_capacity,
+    COALESCE(SUM(ra.allocated_space), 0) AS used_space,
+    tt.total_capacity - COALESCE(SUM(ra.allocated_space), 0) AS remaining_space,
+    ROUND((COALESCE(SUM(ra.allocated_space), 0) / tt.total_capacity) * 100, 2) AS utilisation_pct
+FROM train_trip tt
+LEFT JOIN rail_allocation ra ON tt.trip_id = ra.trip_id
+GROUP BY tt.trip_id, tt.origin_station_id, tt.destination_station_id, tt.departure_datetime, tt.status, tt.total_capacity;

@@ -9,6 +9,7 @@ DROP TABLE IF EXISTS delivery;
 DROP TABLE IF EXISTS roster_assignment;
 DROP TABLE IF EXISTS delivery_staff;
 DROP TABLE IF EXISTS truck;
+DROP TABLE IF EXISTS stock_adjustment;
 DROP TABLE IF EXISTS inventory;
 DROP TABLE IF EXISTS manifest;
 DROP TABLE IF EXISTS rail_allocation;
@@ -40,8 +41,12 @@ CREATE TABLE user (
 CREATE TABLE product (
     product_id INT AUTO_INCREMENT PRIMARY KEY,
     product_name VARCHAR(255) NOT NULL,
+    category VARCHAR(100) NOT NULL DEFAULT 'Ceylon Tea & Spices',
     unit_price DECIMAL(10, 2) NOT NULL,
+    unit_weight_kg DECIMAL(8, 2) NOT NULL DEFAULT 25.00,
     space_consumption_rate DECIMAL(6, 4) NOT NULL,
+    description VARCHAR(500) NULL,
+    image_url VARCHAR(500) NULL,
     is_active TINYINT DEFAULT 1
 ) ENGINE=InnoDB;
 
@@ -50,7 +55,9 @@ CREATE TABLE station_store (
     station_id INT AUTO_INCREMENT PRIMARY KEY,
     city VARCHAR(100) NOT NULL,
     address VARCHAR(500) NOT NULL,
-    is_active TINYINT DEFAULT 1
+    is_active TINYINT DEFAULT 1,
+    manager_id INT NULL,
+    FOREIGN KEY (manager_id) REFERENCES user(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 -- 4. STORAGE_LOCATION
@@ -153,18 +160,38 @@ CREATE TABLE manifest (
     trip_id INT NOT NULL,
     received_at DATETIME NULL,
     status VARCHAR(50) DEFAULT 'PENDING',
+    CONSTRAINT uq_manifest_station_trip UNIQUE (station_id, trip_id),
+    CONSTRAINT chk_manifest_status CHECK (status IN ('PENDING', 'RECEIVED')),
     FOREIGN KEY (station_id) REFERENCES station_store(station_id),
     FOREIGN KEY (trip_id) REFERENCES train_trip(trip_id)
 ) ENGINE=InnoDB;
 
--- 13. INVENTORY
+-- 13. INVENTORY (Feature 4.4 - one stock row per station + product)
 CREATE TABLE inventory (
     inventory_id INT AUTO_INCREMENT PRIMARY KEY,
-    order_item_id INT NOT NULL,
-    manifest_id INT NOT NULL,
-    stored_quantity INT NOT NULL,
-    FOREIGN KEY (order_item_id) REFERENCES order_item(order_item_id),
-    FOREIGN KEY (manifest_id) REFERENCES manifest(manifest_id) ON DELETE CASCADE
+    station_id INT NOT NULL,
+    product_id INT NOT NULL,
+    location_id INT NULL,
+    stored_quantity INT NOT NULL DEFAULT 0,
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_inventory_station_product UNIQUE (station_id, product_id),
+    CONSTRAINT chk_inventory_qty_nonneg CHECK (stored_quantity >= 0),
+    FOREIGN KEY (station_id) REFERENCES station_store(station_id),
+    FOREIGN KEY (product_id) REFERENCES product(product_id),
+    FOREIGN KEY (location_id) REFERENCES storage_location(location_id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- 13b. STOCK_ADJUSTMENT (Feature 4.4 - damaged / missing / manual stock changes)
+CREATE TABLE stock_adjustment (
+    adjustment_id INT AUTO_INCREMENT PRIMARY KEY,
+    inventory_id INT NOT NULL,
+    quantity_delta INT NOT NULL,
+    reason VARCHAR(255) NOT NULL,
+    adjusted_by INT NULL,
+    adjusted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_adjustment_nonzero CHECK (quantity_delta <> 0),
+    FOREIGN KEY (inventory_id) REFERENCES inventory(inventory_id),
+    FOREIGN KEY (adjusted_by) REFERENCES user(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 -- 14. TRUCK
@@ -188,6 +215,9 @@ CREATE TABLE delivery_staff (
 -- 16. ROSTER_ASSIGNMENT
 CREATE TABLE roster_assignment (
     roster_id INT AUTO_INCREMENT PRIMARY KEY,
+    request_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NOT NULL,
+    CONSTRAINT uq_roster_assignment_request_key UNIQUE (request_key),
+    CONSTRAINT chk_roster_assignment_request_key CHECK (CHAR_LENGTH(request_key) > 0),
     route_id INT NOT NULL,
     truck_id INT NOT NULL,
     driver_id INT NOT NULL,
@@ -225,7 +255,20 @@ CREATE TABLE audit_log (
     outcome VARCHAR(50) NOT NULL,
     occurred_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     entity_name VARCHAR(100) NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE CASCADE
+    -- Unrelated column audit inserts leave the roster NULL.
+    roster_id INT NULL,
+    CONSTRAINT uq_audit_log_roster UNIQUE (roster_id),
+    INDEX idx_audit_log_action_time (action, occurred_at DESC, audit_id DESC),
+    INDEX idx_audit_log_user (user_id),
+    CONSTRAINT fk_audit_log_user FOREIGN KEY (user_id) REFERENCES user(user_id),
+    CONSTRAINT fk_audit_log_roster FOREIGN KEY (roster_id) REFERENCES roster_assignment(roster_id),
+    CONSTRAINT chk_audit_log_roster_accepted CHECK (
+        roster_id IS NULL OR (
+            action = 'ASSIGN_ROSTER' AND outcome = 'ACCEPTED'
+            AND entity_name = 'roster_assignment' AND entity_id = roster_id
+            AND occurred_at IS NOT NULL
+        )
+    )
 ) ENGINE=InnoDB;
 
 -- 19. STOCK_ADJUSTMENT (Feature 4.4 / Store Manager & Warehouse Staff)
@@ -241,3 +284,23 @@ CREATE TABLE IF NOT EXISTS stock_adjustment (
     FOREIGN KEY (product_id) REFERENCES product(product_id) ON DELETE CASCADE,
     FOREIGN KEY (reported_by) REFERENCES user(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
+
+-- 20. NOTIFICATION (Real-time Logistics Alerts & Notification History)
+CREATE TABLE IF NOT EXISTS notification (
+    notification_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NULL,
+    recipient_email VARCHAR(255) NOT NULL,
+    notification_type VARCHAR(50) NOT NULL DEFAULT 'NEW_CONSIGNMENT',
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    order_id INT NULL,
+    is_read TINYINT DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_notification_user (user_id),
+    INDEX idx_notification_order (order_id),
+    INDEX idx_notification_read (is_read),
+    INDEX idx_notification_time (created_at DESC),
+    FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE SET NULL,
+    FOREIGN KEY (order_id) REFERENCES customer_order(order_id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+

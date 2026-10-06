@@ -52,4 +52,15 @@ BEGIN
     END IF;
 END //
 
+-- 4. Feature 4.4: keep station stock in sync with the stock_adjustment log
+DROP TRIGGER IF EXISTS trg_apply_stock_adjustment//
+CREATE TRIGGER trg_apply_stock_adjustment
+AFTER INSERT ON stock_adjustment
+FOR EACH ROW
+BEGIN
+    UPDATE inventory
+    SET stored_quantity = stored_quantity + NEW.quantity_delta
+    WHERE inventory_id = NEW.inventory_id;
+END //
+
 DELIMITER ;
