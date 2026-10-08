@@ -3,14 +3,17 @@ import mysql.connector
 
 CFG = dict(host="127.0.0.1", port=int(os.getenv("MYSQL_PORT", "3307")),
            user="root", password="", database="kandypack_db")
-N = 5          # simultaneous allocation attempts
+N = int(os.getenv("CONC_N", "5"))          # simultaneous allocation attempts
 LM_ID = 2      # logistics@kandypack.lk
 
 def setup():
     c = mysql.connector.connect(**CFG); cur = c.cursor()
     tag = uuid.uuid4().hex[:6]
-    cur.execute("INSERT INTO station_store (city, address) VALUES (%s, 'conc origin')", ("CONC-O-" + tag,))
-    origin = cur.lastrowid
+    cur.execute("SELECT station_id FROM station_store WHERE city = 'Kandy' LIMIT 1")
+    row = cur.fetchone()
+    if not row:
+        raise RuntimeError("Kandy station not found")
+    origin = row[0]
     cur.execute("INSERT INTO station_store (city, address) VALUES (%s, 'conc dest')", ("CONC-D-" + tag,))
     dest = cur.lastrowid
     cur.execute("INSERT INTO delivery_route (station_id, route_name, max_delivery_time) VALUES (%s, %s, '08:00:00')", (dest, "CONC route " + tag))
@@ -27,7 +30,7 @@ def setup():
     for _ in range(N):
         cur.execute("INSERT INTO customer_order (customer_id, order_date, delivery_date) VALUES (%s, CURDATE(), CURDATE() + INTERVAL 7 DAY)", (cust,))
         oid = cur.lastrowid
-        cur.execute("INSERT INTO order_item (order_id, product_id, quantity) VALUES (%s, %s, 6)", (oid, prod))
+        cur.execute("INSERT INTO order_item (order_id, product_id, quantity, unit_price_at_order) VALUES (%s, %s, 6, 100.00)", (oid, prod))
         orders.append(oid)
     c.commit(); cur.close(); c.close()
     return trip, orders
