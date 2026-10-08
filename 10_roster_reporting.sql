@@ -1,5 +1,3 @@
--- Reusable duty intervals for selected-week roster reporting.
-
 USE kandypack_db;
 
 CREATE SQL SECURITY INVOKER VIEW v_roster_duty_intervals AS

@@ -215,6 +215,7 @@ CREATE TABLE delivery_staff (
     user_id INT NOT NULL,
     license_number VARCHAR(100) NOT NULL,
     work_hours DECIMAL(5, 2) DEFAULT 0.00,
+    CONSTRAINT uq_delivery_staff_user UNIQUE (user_id),
     FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
