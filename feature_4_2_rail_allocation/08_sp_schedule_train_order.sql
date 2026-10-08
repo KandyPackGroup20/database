@@ -1,4 +1,5 @@
 -- multi trip spillover scheduler (transaction + row locking)
+-- Feature 4.2: Rail Capacity Allocation & Spillover
 USE kandypack_db;
 DELIMITER //
 
@@ -12,6 +13,7 @@ proc_body: BEGIN
   DECLARE v_status        VARCHAR(50);
   DECLARE v_delivery_date DATE;
   DECLARE v_dest_station  INT;
+  DECLARE v_kandy_station INT;
   DECLARE v_item_id       INT DEFAULT 0;
   DECLARE v_next_item     INT;
   DECLARE v_item_qty      INT;
@@ -39,6 +41,11 @@ proc_body: BEGIN
   BEGIN
     ROLLBACK;
     SET p_result = 'ERROR_TRANSACTION_FAILED';
+    IF p_user_id IS NOT NULL THEN
+      INSERT INTO audit_log (user_id, action, entity_id, outcome, entity_name)
+      VALUES (p_user_id, 'SCHEDULE_RAIL_ORDER', p_order_id, 'ERROR_TRANSACTION_FAILED', 'customer_order');
+      COMMIT;
+    END IF;
   END;
 
   START TRANSACTION;
@@ -49,10 +56,23 @@ proc_body: BEGIN
     FROM customer_order WHERE order_id = p_order_id FOR UPDATE;
 
   IF v_status IS NULL THEN
-    ROLLBACK; SET p_result = 'ORDER_NOT_FOUND'; LEAVE proc_body;
+    ROLLBACK; SET p_result = 'ORDER_NOT_FOUND';
+    IF p_user_id IS NOT NULL THEN
+      INSERT INTO audit_log (user_id, action, entity_id, outcome, entity_name)
+      VALUES (p_user_id, 'SCHEDULE_RAIL_ORDER', p_order_id, p_result, 'customer_order');
+      COMMIT;
+    END IF;
+    LEAVE proc_body;
   END IF;
+
   IF v_status <> 'PENDING_RAIL_SCHEDULING' THEN
-    ROLLBACK; SET p_result = 'INVALID_ORDER_STATUS'; LEAVE proc_body;
+    ROLLBACK; SET p_result = 'INVALID_ORDER_STATUS';
+    IF p_user_id IS NOT NULL THEN
+      INSERT INTO audit_log (user_id, action, entity_id, outcome, entity_name)
+      VALUES (p_user_id, 'SCHEDULE_RAIL_ORDER', p_order_id, p_result, 'customer_order');
+      COMMIT;
+    END IF;
+    LEAVE proc_body;
   END IF;
 
   -- 2. destination hub = station of the customer's delivery route
@@ -64,7 +84,26 @@ proc_body: BEGIN
    WHERE co.order_id = p_order_id;
 
   IF v_dest_station IS NULL THEN
-    ROLLBACK; SET p_result = 'DESTINATION_HUB_NOT_RESOLVED'; LEAVE proc_body;
+    ROLLBACK; SET p_result = 'DESTINATION_HUB_NOT_RESOLVED';
+    IF p_user_id IS NOT NULL THEN
+      INSERT INTO audit_log (user_id, action, entity_id, outcome, entity_name)
+      VALUES (p_user_id, 'SCHEDULE_RAIL_ORDER', p_order_id, p_result, 'customer_order');
+      COMMIT;
+    END IF;
+    LEAVE proc_body;
+  END IF;
+
+  -- LM-03: Origin must be Kandy
+  SET v_kandy_station = NULL;
+  SELECT station_id INTO v_kandy_station FROM station_store WHERE city = 'Kandy' LIMIT 1;
+  IF v_kandy_station IS NULL THEN
+    ROLLBACK; SET p_result = 'ORIGIN_HUB_NOT_FOUND';
+    IF p_user_id IS NOT NULL THEN
+      INSERT INTO audit_log (user_id, action, entity_id, outcome, entity_name)
+      VALUES (p_user_id, 'SCHEDULE_RAIL_ORDER', p_order_id, p_result, 'customer_order');
+      COMMIT;
+    END IF;
+    LEAVE proc_body;
   END IF;
 
   -- 3. walk the order items one by one
@@ -85,7 +124,13 @@ proc_body: BEGIN
      WHERE oi.order_item_id = v_item_id;
 
     IF v_rate <= 0 THEN
-      ROLLBACK; SET p_result = 'INVALID_PRODUCT_SPACE_RATE'; LEAVE proc_body;
+      ROLLBACK; SET p_result = 'INVALID_PRODUCT_SPACE_RATE';
+      IF p_user_id IS NOT NULL THEN
+        INSERT INTO audit_log (user_id, action, entity_id, outcome, entity_name)
+        VALUES (p_user_id, 'SCHEDULE_RAIL_ORDER', p_order_id, p_result, 'customer_order');
+        COMMIT;
+      END IF;
+      LEAVE proc_body;
     END IF;
 
     SET v_remaining = v_item_qty;
@@ -99,7 +144,8 @@ proc_body: BEGIN
       SELECT tt.trip_id, tt.departure_datetime, tt.total_capacity
         INTO v_trip_id, v_trip_dep, v_trip_cap
         FROM train_trip tt
-       WHERE tt.destination_station_id = v_dest_station
+       WHERE tt.origin_station_id = v_kandy_station
+         AND tt.destination_station_id = v_dest_station
          AND tt.status = 'SCHEDULED'
          AND tt.departure_datetime > NOW()
          AND tt.arrival_datetime < v_delivery_date + INTERVAL 1 DAY
@@ -135,12 +181,24 @@ proc_body: BEGIN
     END WHILE trip_loop;
 
     IF v_remaining > 0 THEN
-      ROLLBACK; SET p_result = 'INSUFFICIENT_RAIL_CAPACITY'; LEAVE proc_body;
+      ROLLBACK; SET p_result = 'INSUFFICIENT_RAIL_CAPACITY';
+      IF p_user_id IS NOT NULL THEN
+        INSERT INTO audit_log (user_id, action, entity_id, outcome, entity_name)
+        VALUES (p_user_id, 'SCHEDULE_RAIL_ORDER', p_order_id, p_result, 'customer_order');
+        COMMIT;
+      END IF;
+      LEAVE proc_body;
     END IF;
   END LOOP item_loop;
 
   IF v_any_item = 0 THEN
-    ROLLBACK; SET p_result = 'ORDER_HAS_NO_ITEMS'; LEAVE proc_body;
+    ROLLBACK; SET p_result = 'ORDER_HAS_NO_ITEMS';
+    IF p_user_id IS NOT NULL THEN
+      INSERT INTO audit_log (user_id, action, entity_id, outcome, entity_name)
+      VALUES (p_user_id, 'SCHEDULE_RAIL_ORDER', p_order_id, p_result, 'customer_order');
+      COMMIT;
+    END IF;
+    LEAVE proc_body;
   END IF;
 
   -- 5. single trip or multi-trip?
