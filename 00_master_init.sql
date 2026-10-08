@@ -734,6 +734,9 @@ INSERT INTO truck (truck_id, plate_number, capacity) VALUES
 (2, 'WP-CAB-1002', 3500.00),
 (3, 'SP-CAB-2001', 5000.00);
 
+-- MySQL client includes; run this script from the database directory.
+SOURCE 02_views.sql
+
 INSERT INTO delivery_staff (delivery_staff_id, user_id, license_number, work_hours) VALUES
 (1, 6, 'LIC-D-101', 38.00),
 (2, 7, 'LIC-D-102', 27.00),
