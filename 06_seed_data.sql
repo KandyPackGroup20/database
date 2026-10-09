@@ -101,12 +101,12 @@ INSERT INTO customer (customer_id, user_id, customer_name, route_id, phone, addr
 (1, 12, 'Lanka Retailers Ltd', 1, '0112345678', 'Main Street Wholesalers, Pettah', 'Colombo 11', '01100');
 
 -- 8. CUSTOMER_ORDER
-INSERT INTO customer_order (order_id, customer_id, order_date, delivery_date, status) VALUES
-(1001, 1, '2026-08-08', '2026-08-15', 'PENDING_RAIL_SCHEDULING');
+INSERT INTO customer_order (order_id, customer_id, order_date, delivery_date, status, delivery_route_id, delivery_address, recipient_name, recipient_phone) VALUES
+(1001, 1, '2026-08-08', '2026-08-15', 'PENDING_RAIL_SCHEDULING', 1, 'Main Street Wholesalers, Pettah', 'Lanka Retailers Ltd', '0112345678');
 
 -- 9. ORDER_ITEM
-INSERT INTO order_item (order_item_id, order_id, product_id, quantity) VALUES
-(1, 1001, 3, 200); -- 200 * 0.25 = 50.00 total space
+INSERT INTO order_item (order_item_id, order_id, product_id, quantity, unit_price_at_order) VALUES
+(1, 1001, 3, 200, 2600.00);
 
 -- 10. TRUCK
 INSERT INTO truck (truck_id, plate_number, capacity) VALUES

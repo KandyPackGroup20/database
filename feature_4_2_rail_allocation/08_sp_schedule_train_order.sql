@@ -60,7 +60,7 @@ proc_body: BEGIN
   SELECT dr.station_id INTO v_dest_station
     FROM customer_order co
     JOIN customer c        ON c.customer_id = co.customer_id
-    JOIN delivery_route dr ON dr.route_id   = c.route_id
+    JOIN delivery_route dr ON dr.route_id   = co.delivery_route_id
    WHERE co.order_id = p_order_id;
 
   IF v_dest_station IS NULL THEN

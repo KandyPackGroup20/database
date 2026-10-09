@@ -195,3 +195,20 @@ FLUSH PRIVILEGES;
 -- 2.Security Risks: Each user would have their own  credentials, 
 --    increasing the attack surface and making it harder to manage and monitor 
 --    user access.
+
+-- Planned cargo reads; no warehouse mutation privileges.
+GRANT SELECT ON kandypack_db.station_store TO 'role_dispatcher';
+GRANT SELECT ON kandypack_db.order_item TO 'role_dispatcher';
+GRANT SELECT ON kandypack_db.product TO 'role_dispatcher';
+GRANT SELECT ON kandypack_db.train_trip TO 'role_dispatcher';
+GRANT SELECT ON kandypack_db.manifest TO 'role_dispatcher';
+GRANT SELECT ON kandypack_db.rail_allocation TO 'role_dispatcher';
+GRANT SELECT, INSERT ON kandypack_db.audit_log TO 'role_dispatcher';
+GRANT SELECT ON kandypack_db.user TO 'role_dispatcher';
+GRANT SELECT ON kandypack_db.customer TO 'role_logistics_mgr';
+GRANT SELECT ON kandypack_db.delivery TO 'role_logistics_mgr';
+GRANT SELECT ON kandypack_db.roster_assignment TO 'role_logistics_mgr';
+GRANT SELECT ON kandypack_db.truck TO 'role_logistics_mgr';
+GRANT SELECT ON kandypack_db.delivery_staff TO 'role_logistics_mgr';
+GRANT SELECT ON kandypack_db.user TO 'role_logistics_mgr';
+GRANT SELECT ON kandypack_db.manifest TO 'role_logistics_mgr';

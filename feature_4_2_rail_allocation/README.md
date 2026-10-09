@@ -1,6 +1,13 @@
 # Feature 4.2 - Rail Capacity Allocation & Spillover
 Owner: Kethmika K.A.D.Y (Group 20, CS3043)
 
+Run supplements 01 through 09 once after either complete fresh base initialization
+path in the parent README. `sp_schedule_train_order` reads the destination from
+`customer_order.delivery_route_id`; later customer-profile changes cannot reroute
+an existing order. Its `fn_order_item_space` dependency must be installed first.
+Manifest creation remains a separate rail/receiving integration responsibility;
+allocation alone does not prove station receipt.
+
 Run order (after 00_master_init.sql has created the base schema):
 
 | File | What it adds |

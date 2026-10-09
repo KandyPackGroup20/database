@@ -113,6 +113,14 @@ CREATE TABLE customer_order (
     customer_id INT NOT NULL,
     order_date DATE NOT NULL,
     delivery_date DATE NOT NULL,
+    delivery_route_id INT NOT NULL,
+    delivery_address VARCHAR(500) NOT NULL,
+    recipient_name VARCHAR(255) NOT NULL,
+    recipient_phone VARCHAR(30) NOT NULL,
+    CONSTRAINT fk_order_delivery_route FOREIGN KEY (delivery_route_id) REFERENCES delivery_route(route_id) ON DELETE RESTRICT,
+    CONSTRAINT chk_order_delivery_address CHECK (CHAR_LENGTH(TRIM(delivery_address)) > 0),
+    CONSTRAINT chk_order_recipient_name CHECK (CHAR_LENGTH(TRIM(recipient_name)) > 0),
+    CONSTRAINT chk_order_recipient_phone CHECK (CHAR_LENGTH(TRIM(recipient_phone)) > 0),
     status VARCHAR(50) DEFAULT 'PENDING_RAIL_SCHEDULING',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_id) REFERENCES customer(customer_id)
@@ -212,6 +220,9 @@ CREATE TABLE truck (
     truck_id INT AUTO_INCREMENT PRIMARY KEY,
     plate_number VARCHAR(50) NOT NULL,
     capacity DECIMAL(10, 2) NOT NULL,
+    capacity_unit VARCHAR(16) NULL DEFAULT NULL,
+    CONSTRAINT chk_truck_capacity CHECK (capacity > 0),
+    CONSTRAINT chk_truck_capacity_unit CHECK (capacity_unit IS NULL OR capacity_unit = 'KG'),
     is_active TINYINT DEFAULT 1,
     CONSTRAINT uq_truck_plate UNIQUE (plate_number)
 ) ENGINE=InnoDB;
@@ -254,10 +265,17 @@ CREATE TABLE delivery (
     roster_id INT NOT NULL,
     order_id INT NOT NULL,
     delivered_at DATETIME NULL,
-    delivery_status VARCHAR(50) DEFAULT 'PENDING',
+    delivery_status VARCHAR(50) NOT NULL DEFAULT 'ASSIGNED',
     proof_reference VARCHAR(500) NULL,
-    FOREIGN KEY (roster_id) REFERENCES roster_assignment(roster_id) ON DELETE CASCADE,
-    FOREIGN KEY (order_id) REFERENCES customer_order(order_id) ON DELETE CASCADE
+    assigned_at DATETIME NOT NULL,
+    assigned_by INT NOT NULL,
+    cargo_weight_kg DECIMAL(14,2) NOT NULL,
+    active_order_id INT GENERATED ALWAYS AS (CASE WHEN delivery_status = 'CANCELLED' THEN NULL ELSE order_id END) STORED,
+    CONSTRAINT uq_delivery_active_order UNIQUE (active_order_id),
+    CONSTRAINT chk_delivery_cargo_weight CHECK (cargo_weight_kg > 0),
+    CONSTRAINT fk_delivery_actor FOREIGN KEY (assigned_by) REFERENCES user(user_id) ON DELETE RESTRICT,
+    FOREIGN KEY (roster_id) REFERENCES roster_assignment(roster_id) ON DELETE RESTRICT,
+    FOREIGN KEY (order_id) REFERENCES customer_order(order_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB;
 
 -- 18. AUDIT_LOG

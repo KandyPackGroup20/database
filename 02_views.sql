@@ -1,6 +1,18 @@
 -- Kandypack Logistics Platform - Database Views (MySQL 8.0)
 USE kandypack_db;
 
+CREATE OR REPLACE VIEW v_quarterly_rail_analytics AS
+SELECT ss.city AS destination_hub, YEAR(co.order_date) AS order_year,
+       QUARTER(co.order_date) AS order_quarter, COUNT(DISTINCT co.order_id) AS total_orders,
+       SUM(ra.allocated_quantity) AS total_units_shipped,
+       SUM(ra.allocated_space) AS total_cubic_meters_shipped
+FROM customer_order co
+JOIN delivery_route dr ON dr.route_id=co.delivery_route_id
+JOIN station_store ss ON ss.station_id=dr.station_id
+JOIN order_item oi ON oi.order_id=co.order_id
+JOIN rail_allocation ra ON ra.order_item_id=oi.order_item_id
+GROUP BY ss.city, YEAR(co.order_date), QUARTER(co.order_date);
+
 -- 1. Available Drivers View (Feature 4.1 / 4.3)
 CREATE OR REPLACE VIEW v_available_drivers AS
 SELECT
@@ -109,7 +121,7 @@ SELECT
 FROM customer_order co
 JOIN customer c ON co.customer_id = c.customer_id
 JOIN user u ON c.user_id = u.user_id
-LEFT JOIN delivery_route dr ON c.route_id = dr.route_id
+LEFT JOIN delivery_route dr ON co.delivery_route_id = dr.route_id
 LEFT JOIN station_store ss ON dr.station_id = ss.station_id;
 
 -- 7. Quarterly Sales Summary View (Feature 4.1 / Report 1)
@@ -128,7 +140,7 @@ FROM customer_order co
 JOIN order_item oi ON co.order_id = oi.order_id
 JOIN product p ON oi.product_id = p.product_id
 JOIN customer c ON co.customer_id = c.customer_id
-LEFT JOIN delivery_route dr ON c.route_id = dr.route_id
+LEFT JOIN delivery_route dr ON co.delivery_route_id = dr.route_id
 GROUP BY dr.route_name, p.product_name, YEAR(co.order_date), QUARTER(co.order_date) WITH ROLLUP;
 
 -- 8. Top Quarterly Selling Products View (Feature 4.1 / Report 2)
