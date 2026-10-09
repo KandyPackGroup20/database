@@ -101,7 +101,7 @@ INTO v_dest_hub
     JOIN customer c
 ON co.customer_id = c.customer_id
     JOIN delivery_route dr
-ON c.route_id = dr.route_id
+ON co.delivery_route_id = dr.route_id
     WHERE co.order_id = p_order_id;
 
 

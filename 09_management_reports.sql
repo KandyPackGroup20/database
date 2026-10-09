@@ -27,7 +27,7 @@ FROM (
     JOIN customer c
         ON co.customer_id = c.customer_id
     LEFT JOIN delivery_route dr
-        ON c.route_id = dr.route_id
+        ON co.delivery_route_id = dr.route_id
     JOIN order_item oi
         ON co.order_id = oi.order_id
     JOIN product p
@@ -110,7 +110,7 @@ JOIN customer c
     ON co.customer_id = c.customer_id
 
 JOIN delivery_route dr
-    ON c.route_id = dr.route_id
+    ON co.delivery_route_id = dr.route_id
 
 JOIN station_store ss
     ON dr.station_id = ss.station_id
@@ -272,7 +272,7 @@ JOIN customer c
     ON co.customer_id = c.customer_id
 
 LEFT JOIN delivery_route dr
-    ON c.route_id = dr.route_id
+    ON co.delivery_route_id = dr.route_id
 
 LEFT JOIN order_item oi
     ON co.order_id = oi.order_id

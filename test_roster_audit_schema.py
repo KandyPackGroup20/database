@@ -49,7 +49,8 @@ def rebuild(path):
     client = shutil.which("mysql")
     if not client:
         raise RuntimeError("mysql CLI is required to interpret DELIMITER correctly")
-    script = "\n".join((ROOT / name).read_text(encoding="utf-8") for name in PATHS[path])
+    supplements = sorted((ROOT / "feature_4_2_rail_allocation").glob("0[1-9]_*.sql"))
+    script = "\n".join((ROOT / name).read_text(encoding="utf-8") for name in PATHS[path]) + "\n" + "\n".join(p.read_text(encoding="utf-8") for p in supplements)
     subprocess.run([client, "--no-defaults", "--protocol=TCP", "--host=127.0.0.1",
                     "--port=" + os.environ["ROSTER_MYSQL_TEST_PORT"], "--user=root", "--batch"],
                    input=script, text=True, encoding="utf-8", capture_output=True, check=True,

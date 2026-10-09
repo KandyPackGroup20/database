@@ -42,8 +42,12 @@ CREATE TABLE user (
 CREATE TABLE product (
     product_id INT AUTO_INCREMENT PRIMARY KEY,
     product_name VARCHAR(255) NOT NULL,
+    category VARCHAR(100) NOT NULL DEFAULT 'Ceylon Tea & Spices',
     unit_price DECIMAL(10, 2) NOT NULL,
+    unit_weight_kg DECIMAL(8, 2) NOT NULL DEFAULT 25.00,
     space_consumption_rate DECIMAL(6, 4) NOT NULL,
+    description VARCHAR(500) NULL,
+    image_url VARCHAR(500) NULL,
     is_active TINYINT DEFAULT 1
 ) ENGINE=InnoDB;
 
@@ -110,6 +114,14 @@ CREATE TABLE customer_order (
     customer_id INT NOT NULL,
     order_date DATE NOT NULL,
     delivery_date DATE NOT NULL,
+    delivery_route_id INT NOT NULL,
+    delivery_address VARCHAR(500) NOT NULL,
+    recipient_name VARCHAR(255) NOT NULL,
+    recipient_phone VARCHAR(30) NOT NULL,
+    CONSTRAINT fk_order_delivery_route FOREIGN KEY (delivery_route_id) REFERENCES delivery_route(route_id) ON DELETE RESTRICT,
+    CONSTRAINT chk_order_delivery_address CHECK (CHAR_LENGTH(TRIM(delivery_address)) > 0),
+    CONSTRAINT chk_order_recipient_name CHECK (CHAR_LENGTH(TRIM(recipient_name)) > 0),
+    CONSTRAINT chk_order_recipient_phone CHECK (CHAR_LENGTH(TRIM(recipient_phone)) > 0),
     status VARCHAR(50) DEFAULT 'PENDING_RAIL_SCHEDULING',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_id) REFERENCES customer(customer_id)
@@ -187,13 +199,20 @@ CREATE TABLE inventory (
 -- 13b. STOCK_ADJUSTMENT (Feature 4.4 - damaged / missing / manual stock changes)
 CREATE TABLE stock_adjustment (
     adjustment_id INT AUTO_INCREMENT PRIMARY KEY,
-    inventory_id INT NOT NULL,
-    quantity_delta INT NOT NULL,
+    station_id INT NULL,
+    product_id INT NULL,
+    quantity_adjusted INT NULL DEFAULT 0,
+    inventory_id INT NULL,
+    quantity_delta INT NULL DEFAULT 0,
     reason VARCHAR(255) NOT NULL,
+    reported_by INT NULL,
     adjusted_by INT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     adjusted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT chk_adjustment_nonzero CHECK (quantity_delta <> 0),
-    FOREIGN KEY (inventory_id) REFERENCES inventory(inventory_id),
+    FOREIGN KEY (station_id) REFERENCES station_store(station_id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES product(product_id) ON DELETE CASCADE,
+    FOREIGN KEY (inventory_id) REFERENCES inventory(inventory_id) ON DELETE SET NULL,
+    FOREIGN KEY (reported_by) REFERENCES user(user_id) ON DELETE SET NULL,
     FOREIGN KEY (adjusted_by) REFERENCES user(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
@@ -202,6 +221,9 @@ CREATE TABLE truck (
     truck_id INT AUTO_INCREMENT PRIMARY KEY,
     plate_number VARCHAR(50) NOT NULL,
     capacity DECIMAL(10, 2) NOT NULL,
+    capacity_unit VARCHAR(16) NULL DEFAULT NULL,
+    CONSTRAINT chk_truck_capacity CHECK (capacity > 0),
+    CONSTRAINT chk_truck_capacity_unit CHECK (capacity_unit IS NULL OR capacity_unit = 'KG'),
     is_active TINYINT DEFAULT 1,
     CONSTRAINT uq_truck_plate UNIQUE (plate_number)
 ) ENGINE=InnoDB;
@@ -231,8 +253,6 @@ CREATE TABLE roster_assignment (
     end_time DATETIME NOT NULL,
     status VARCHAR(50) DEFAULT 'SCHEDULED',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT chk_roster_assignment_interval CHECK (end_time > start_time),
-    CONSTRAINT chk_roster_assignment_people CHECK (driver_id <> assistant_id),
     FOREIGN KEY (route_id) REFERENCES delivery_route(route_id),
     FOREIGN KEY (truck_id) REFERENCES truck(truck_id),
     FOREIGN KEY (driver_id) REFERENCES delivery_staff(delivery_staff_id),
@@ -246,10 +266,17 @@ CREATE TABLE delivery (
     roster_id INT NOT NULL,
     order_id INT NOT NULL,
     delivered_at DATETIME NULL,
-    delivery_status VARCHAR(50) DEFAULT 'PENDING',
+    delivery_status VARCHAR(50) NOT NULL DEFAULT 'ASSIGNED',
     proof_reference VARCHAR(500) NULL,
-    FOREIGN KEY (roster_id) REFERENCES roster_assignment(roster_id) ON DELETE CASCADE,
-    FOREIGN KEY (order_id) REFERENCES customer_order(order_id) ON DELETE CASCADE
+    assigned_at DATETIME NOT NULL,
+    assigned_by INT NOT NULL,
+    cargo_weight_kg DECIMAL(14,2) NOT NULL,
+    active_order_id INT GENERATED ALWAYS AS (CASE WHEN delivery_status = 'CANCELLED' THEN NULL ELSE order_id END) STORED,
+    CONSTRAINT uq_delivery_active_order UNIQUE (active_order_id),
+    CONSTRAINT chk_delivery_cargo_weight CHECK (cargo_weight_kg > 0),
+    CONSTRAINT fk_delivery_actor FOREIGN KEY (assigned_by) REFERENCES user(user_id) ON DELETE RESTRICT,
+    FOREIGN KEY (roster_id) REFERENCES roster_assignment(roster_id) ON DELETE RESTRICT,
+    FOREIGN KEY (order_id) REFERENCES customer_order(order_id) ON DELETE RESTRICT
 ) ENGINE=InnoDB;
 
 -- 18. AUDIT_LOG
@@ -439,7 +466,7 @@ SELECT
     SUM(ra.allocated_space) AS total_cubic_meters_shipped
 FROM customer_order co
 JOIN customer c ON co.customer_id = c.customer_id
-LEFT JOIN delivery_route dr ON c.route_id = dr.route_id
+LEFT JOIN delivery_route dr ON co.delivery_route_id = dr.route_id
 LEFT JOIN station_store ss ON dr.station_id = ss.station_id
 JOIN order_item oi ON co.order_id = oi.order_id
 JOIN rail_allocation ra ON oi.order_item_id = ra.order_item_id
@@ -460,40 +487,6 @@ FROM train_trip tt
 LEFT JOIN rail_allocation ra ON tt.trip_id = ra.trip_id
 GROUP BY tt.trip_id, tt.origin_station_id, tt.destination_station_id, tt.departure_datetime, tt.status, tt.total_capacity;
 
-CREATE SQL SECURITY INVOKER VIEW v_roster_duty_intervals AS
-    SELECT
-        roster_id,
-        route_id,
-        truck_id,
-        driver_id AS staff_id,
-        'DRIVER' AS duty_type,
-        start_time,
-        end_time,
-        status,
-        CASE
-            WHEN status = 'CANCELLED' THEN 0
-            WHEN status IN ('SCHEDULED', 'IN_TRANSIT', 'COMPLETED') THEN 1
-            ELSE NULL
-        END AS is_counted
-    FROM roster_assignment
-
-    UNION ALL
-
-    SELECT
-        roster_id,
-        route_id,
-        truck_id,
-        assistant_id AS staff_id,
-        'ASSISTANT' AS duty_type,
-        start_time,
-        end_time,
-        status,
-        CASE
-            WHEN status = 'CANCELLED' THEN 0
-            WHEN status IN ('SCHEDULED', 'IN_TRANSIT', 'COMPLETED') THEN 1
-            ELSE NULL
-        END AS is_counted
-    FROM roster_assignment;
 
 -- 3. STORED PROCEDURES
      
@@ -549,7 +542,7 @@ PROC_BODY: BEGIN
     SELECT dr.station_id INTO v_dest_hub
     FROM customer_order co
     JOIN customer c ON co.customer_id = c.customer_id
-    JOIN delivery_route dr ON c.route_id = dr.route_id
+    JOIN delivery_route dr ON co.delivery_route_id = dr.route_id
     WHERE co.order_id = p_order_id;
 
     IF v_dest_hub IS NULL THEN
@@ -909,12 +902,6 @@ DELIMITER ;
 CREATE INDEX idx_train_trip_alloc ON train_trip (destination_station_id, status, departure_datetime);
 CREATE INDEX idx_customer_order_status_date ON customer_order (status, order_date);
 CREATE INDEX idx_roster_time_overlap ON roster_assignment (status, start_time, end_time, truck_id, driver_id, assistant_id);
-CREATE INDEX idx_roster_truck_window
-    ON roster_assignment (truck_id, status, start_time, end_time);
-CREATE INDEX idx_roster_driver_window
-    ON roster_assignment (driver_id, status, start_time, end_time);
-CREATE INDEX idx_roster_assistant_window
-    ON roster_assignment (assistant_id, status, start_time, end_time);
 CREATE INDEX idx_storage_loc_search ON storage_location (station_id, location_code);
 
      
@@ -944,12 +931,18 @@ INSERT INTO user (user_id, name, role, email, password_hash) VALUES
 (17, 'Nadeesha Trinco Store Mgr', 'STORE_MGR', 'store.trinco@kandypack.lk', '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeg6Lruj3vjPGga31lW'),
 (18, 'Ajith Kandy Store Mgr', 'STORE_MGR', 'store.kandy@kandypack.lk', '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeg6Lruj3vjPGga31lW');
 
-INSERT INTO product (product_id, product_name, unit_price, space_consumption_rate) VALUES
-(1, 'Kandy Pure Ceylon Tea 500g Pack', 450.00, 0.0500),
-(2, 'Kandy Spice Mixture Box (12 Units)', 850.00, 0.1200),
-(3, 'FMCG Biscuits Master Carton (24 Packs)', 1200.00, 0.2500),
-(4, 'Coconut Oil 5L Container', 2400.00, 0.1800);
+-- 2. PRODUCT
+INSERT INTO product (product_id, product_name, category, unit_price, unit_weight_kg, space_consumption_rate, description, image_url) VALUES
+(1, 'Kandy Pure Ceylon BOPF Tea (25kg Crate)', 'Ceylon Tea & Spices', 4500.00, 25.00, 0.0500, 'High-grown export grade Ceylon Black BOPF tea packed in moisture-resistant foil-lined wooden crates.', '/products/tea_crate.jpg'),
+(2, 'Ceylon Spices & Cinnamon Sack (20kg)', 'Ceylon Tea & Spices', 3800.00, 20.00, 0.0400, 'Sun-cured Ceylon alba cinnamon sticks, premium cardamom pods, and organic cloves in heavy-duty jute sacks.', '/products/spices_sack.jpg'),
+(3, 'Nuwara Eliya Highland Vegetables Crate (30kg)', 'Fresh Produce & FMCG', 2600.00, 30.00, 0.0800, 'Ventilated farm-fresh crates of premium highland carrots, leeks, bell peppers, and cabbage for rapid rail transit.', '/products/produce_crates.jpg'),
+(4, 'Ceylon Virgin Coconut Oil Canister (20L / 18kg)', 'Fresh Produce & FMCG', 4200.00, 18.00, 0.0450, 'Cold-pressed extra-virgin coconut oil in food-grade sealed HDPE transit containers.', '/products/coconut_oil.jpg'),
+(5, 'Kandy Handloom Cotton Textile Bolts (25kg)', 'Garments & Textiles', 5200.00, 25.00, 0.0600, 'Protective shrink-wrapped bolts of traditional Sri Lankan batik and handloom cotton textiles for commercial retail.', '/products/textile_rolls.jpg'),
+(6, 'Apparel & Garment Export Cartons (20kg)', 'Garments & Textiles', 4800.00, 20.00, 0.0550, 'Triple-wall corrugated export master cartons of finished garments with security straps and barcoded tags.', '/products/garments_box.jpg'),
+(7, 'Traditional Brassware & Metal Crafts Crate (35kg)', 'Hardware & Industrial', 7500.00, 35.00, 0.0700, 'Handcrafted polished brass oil lamps, brassware, and cultural souvenirs cushioned in protective wooden crates.', '/products/brassware_crate.jpg'),
+(8, 'Precision Industrial Machinery Spares (40kg)', 'Hardware & Industrial', 8900.00, 40.00, 0.0850, 'High-grade steel gears, shafts, and mechanical components packed in shock-absorbing foam-lined transport cases.', '/products/machinery_parts.jpg');
 
+-- 3. STATION_STORE
 INSERT INTO station_store (station_id, city, address, manager_id) VALUES
 (1, 'Colombo', 'Colombo Main Railway Station Store, Colombo 10', 4),
 (2, 'Negombo', 'Negombo Station Hub, Negombo', 13),
@@ -959,6 +952,7 @@ INSERT INTO station_store (station_id, city, address, manager_id) VALUES
 (6, 'Trincomalee', 'Trincomalee Station Hub, Trincomalee', 17),
 (7, 'Kandy', 'Kandy Central Goods Yard, Kandy', 18);
 
+-- 4. STORAGE_LOCATION
 INSERT INTO storage_location (location_id, station_id, location_code, location_type) VALUES
 (1, 1, 'BIN-A1', 'General Goods'),
 (2, 1, 'BIN-A2', 'General Goods'),
@@ -976,40 +970,46 @@ INSERT INTO storage_location (location_id, station_id, location_code, location_t
 (14, 7, 'BIN-K1', 'General Goods'),
 (15, 7, 'BIN-K2', 'General Goods');
 
+-- 5. TRAIN_TRIP (Kandy -> Colombo, Galle)
 INSERT INTO train_trip (trip_id, origin_station_id, destination_station_id, departure_datetime, arrival_datetime, total_capacity, status) VALUES
 (1, 7, 1, '2026-08-10 06:00:00', '2026-08-10 09:30:00', 30.00, 'SCHEDULED'),
 (2, 7, 1, '2026-08-10 14:00:00', '2026-08-10 17:30:00', 40.00, 'SCHEDULED'),
 (3, 7, 3, '2026-08-11 07:00:00', '2026-08-11 11:30:00', 50.00, 'SCHEDULED');
 
+-- 6. DELIVERY_ROUTE
 INSERT INTO delivery_route (route_id, station_id, route_name, max_delivery_time) VALUES
 (1, 1, 'Colombo Central Commercial Route', '04:30:00'),
 (2, 1, 'Greater Colombo Industrial Hub Route', '06:00:00'),
 (3, 3, 'Galle Coastal Route', '05:00:00');
 
+-- 7. CUSTOMER
 INSERT INTO customer (customer_id, user_id, customer_name, route_id, phone, address_line, city, postal_code) VALUES
 (1, 12, 'Lanka Retailers Ltd', 1, '0112345678', 'Main Street Wholesalers, Pettah', 'Colombo 11', '01100');
 
-INSERT INTO customer_order (order_id, customer_id, order_date, delivery_date, status) VALUES
-(1001, 1, '2026-08-08', '2026-08-15', 'PENDING_RAIL_SCHEDULING');
+-- 8. CUSTOMER_ORDER
+INSERT INTO customer_order (order_id, customer_id, order_date, delivery_date, status, delivery_route_id, delivery_address, recipient_name, recipient_phone) VALUES
+(1001, 1, '2026-08-08', '2026-08-15', 'PENDING_RAIL_SCHEDULING', 1, 'Main Street Wholesalers, Pettah', 'Lanka Retailers Ltd', '0112345678');
 
-INSERT INTO order_item (order_item_id, order_id, product_id, quantity) VALUES
-(1, 1001, 3, 200);
+-- 9. ORDER_ITEM
+INSERT INTO order_item (order_item_id, order_id, product_id, quantity, unit_price_at_order) VALUES
+(1, 1001, 3, 200, 2600.00);
 
+-- 10. TRUCK
 INSERT INTO truck (truck_id, plate_number, capacity) VALUES
 (1, 'WP-CAB-1001', 3500.00),
 (2, 'WP-CAB-1002', 3500.00),
 (3, 'SP-CAB-2001', 5000.00);
 
--- MySQL client includes; run this script from the database directory.
-SOURCE 02_views.sql
-
+-- 11. DELIVERY_STAFF (Consolidated drivers and assistants)
 INSERT INTO delivery_staff (delivery_staff_id, user_id, license_number, work_hours) VALUES
-(1, 6, 'LIC-D-101', 38.00),
-(2, 7, 'LIC-D-102', 27.00),
-(3, 8, 'LIC-D-103', 40.00),
-(4, 9, 'LIC-A-201', 45.00),
-(5, 10, 'LIC-A-202', 58.00),
-(6, 11, 'LIC-A-203', 33.00);
+(1, 6, 'LIC-D-101', 38.00), -- Driver 1
+(2, 7, 'LIC-D-102', 27.00), -- Driver 2
+(3, 8, 'LIC-D-103', 40.00), -- Driver 3 (cap reached)
+(4, 9, 'LIC-A-201', 45.00), -- Assistant 1
+(5, 10, 'LIC-A-202', 58.00), -- Assistant 2
+(6, 11, 'LIC-A-203', 33.00); -- Assistant 3
+
+
 -- 12. INVENTORY (Feature 4.4 - starting stock per station/product)
 INSERT INTO inventory (inventory_id, station_id, product_id, location_id, stored_quantity) VALUES
 (1, 1, 1, 1, 500),
@@ -1032,7 +1032,82 @@ INSERT INTO manifest (manifest_id, station_id, trip_id, received_at, status) VAL
 (2, 1, 2, NULL, 'PENDING'),
 (3, 3, 3, NULL, 'PENDING');
 
--- MySQL client includes; run this script from the database directory.
+SOURCE 02_views.sql
 SOURCE 09_roster_assignment.sql
 SOURCE 10_roster_reporting.sql
 
+
+DELIMITER //
+DROP TRIGGER IF EXISTS trg_order_destination_immutable//
+CREATE TRIGGER trg_order_destination_immutable BEFORE UPDATE ON customer_order FOR EACH ROW
+BEGIN
+    IF (NOT (OLD.delivery_route_id <=> NEW.delivery_route_id)
+        OR NOT (OLD.delivery_address <=> NEW.delivery_address)
+        OR NOT (OLD.recipient_name <=> NEW.recipient_name)
+        OR NOT (OLD.recipient_phone <=> NEW.recipient_phone))
+       AND (EXISTS(SELECT 1 FROM rail_allocation ra JOIN order_item oi ON oi.order_item_id=ra.order_item_id WHERE oi.order_id=OLD.order_id)
+            OR EXISTS(SELECT 1 FROM delivery WHERE order_id=OLD.order_id)) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Allocated order destinations are immutable';
+    END IF;
+END //
+DROP TRIGGER IF EXISTS trg_route_station_immutable//
+CREATE TRIGGER trg_route_station_immutable BEFORE UPDATE ON delivery_route FOR EACH ROW
+BEGIN
+    IF OLD.station_id<>NEW.station_id AND
+       (EXISTS(SELECT 1 FROM customer_order WHERE delivery_route_id=OLD.route_id)
+        OR EXISTS(SELECT 1 FROM roster_assignment WHERE route_id=OLD.route_id)) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Referenced route station is immutable';
+    END IF;
+END //
+DROP TRIGGER IF EXISTS trg_delivery_assignment_immutable//
+CREATE TRIGGER trg_delivery_assignment_immutable BEFORE UPDATE ON delivery FOR EACH ROW
+BEGIN
+    IF NOT (OLD.delivery_id <=> NEW.delivery_id) OR NOT (OLD.roster_id <=> NEW.roster_id)
+       OR NOT (OLD.order_id <=> NEW.order_id) OR NOT (OLD.assigned_at <=> NEW.assigned_at)
+       OR NOT (OLD.assigned_by <=> NEW.assigned_by) OR NOT (OLD.cargo_weight_kg <=> NEW.cargo_weight_kg) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Cargo assignment facts are immutable';
+    END IF;
+END //
+DROP TRIGGER IF EXISTS trg_delivery_evidence_delete//
+CREATE TRIGGER trg_delivery_evidence_delete BEFORE DELETE ON delivery FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Cargo assignment evidence cannot be deleted';
+END //
+DROP TRIGGER IF EXISTS trg_assigned_item_insert//
+CREATE TRIGGER trg_assigned_item_insert BEFORE INSERT ON order_item FOR EACH ROW
+BEGIN
+    DECLARE v_order INT;
+    SELECT order_id INTO v_order FROM customer_order WHERE order_id=NEW.order_id FOR UPDATE;
+    IF EXISTS(SELECT 1 FROM delivery WHERE order_id=NEW.order_id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Assigned order items are immutable';
+    END IF;
+END //
+DROP TRIGGER IF EXISTS trg_assigned_item_update//
+CREATE TRIGGER trg_assigned_item_update BEFORE UPDATE ON order_item FOR EACH ROW
+BEGIN
+    DECLARE v_order INT;
+    SELECT order_id INTO v_order FROM customer_order WHERE order_id=LEAST(OLD.order_id,NEW.order_id) FOR UPDATE;
+    SELECT order_id INTO v_order FROM customer_order WHERE order_id=GREATEST(OLD.order_id,NEW.order_id) FOR UPDATE;
+    IF (NOT (OLD.order_id <=> NEW.order_id) OR NOT (OLD.product_id <=> NEW.product_id)
+        OR NOT (OLD.quantity <=> NEW.quantity) OR NOT (OLD.order_item_id <=> NEW.order_item_id))
+       AND EXISTS(SELECT 1 FROM delivery WHERE order_id IN (OLD.order_id,NEW.order_id)) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Assigned order items are immutable';
+    END IF;
+END //
+DROP TRIGGER IF EXISTS trg_assigned_item_delete//
+CREATE TRIGGER trg_assigned_item_delete BEFORE DELETE ON order_item FOR EACH ROW
+BEGIN
+    DECLARE v_order INT;
+    SELECT order_id INTO v_order FROM customer_order WHERE order_id=OLD.order_id FOR UPDATE;
+    IF EXISTS(SELECT 1 FROM delivery WHERE order_id=OLD.order_id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Assigned order items are immutable';
+    END IF;
+END //
+DELIMITER ;
+
+CREATE INDEX idx_order_destination_date ON customer_order (delivery_route_id, delivery_date, status);
+CREATE INDEX idx_delivery_run_status ON delivery (roster_id, delivery_status, delivery_id);
+
+CREATE INDEX idx_manifest_station_status ON manifest (station_id, status);
+
+CREATE INDEX idx_stock_adjust_inv_date ON stock_adjustment (inventory_id, adjusted_at);

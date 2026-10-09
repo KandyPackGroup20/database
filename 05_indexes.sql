@@ -24,3 +24,5 @@ ON manifest (station_id, status);
 -- 6. Feature 4.4: history of one stock row, newest first
 CREATE INDEX idx_stock_adjust_inv_date
 ON stock_adjustment (inventory_id, adjusted_at);
+CREATE INDEX idx_order_destination_date ON customer_order (delivery_route_id, delivery_date, status);
+CREATE INDEX idx_delivery_run_status ON delivery (roster_id, delivery_status, delivery_id);
