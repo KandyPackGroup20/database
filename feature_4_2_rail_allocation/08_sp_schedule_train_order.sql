@@ -81,6 +81,8 @@ proc_body: BEGIN
     FROM customer_order co
     JOIN customer c        ON c.customer_id = co.customer_id
     JOIN delivery_route dr ON dr.route_id   = co.delivery_route_id
+    JOIN station_store dest ON dest.station_id = dr.station_id AND dest.is_active = 1
+      AND dest.city IN ('Colombo','Negombo','Galle','Matara','Jaffna','Trincomalee')
    WHERE co.order_id = p_order_id;
 
   IF v_dest_station IS NULL THEN
@@ -95,7 +97,7 @@ proc_body: BEGIN
 
   -- LM-03: Origin must be Kandy
   SET v_kandy_station = NULL;
-  SELECT station_id INTO v_kandy_station FROM station_store WHERE city = 'Kandy' LIMIT 1;
+  SELECT station_id INTO v_kandy_station FROM station_store WHERE city = 'Kandy' AND is_active = 1 ORDER BY station_id LIMIT 1;
   IF v_kandy_station IS NULL THEN
     ROLLBACK; SET p_result = 'ORIGIN_HUB_NOT_FOUND';
     IF p_user_id IS NOT NULL THEN
@@ -123,7 +125,12 @@ proc_body: BEGIN
       FROM order_item oi JOIN product p ON p.product_id = oi.product_id
      WHERE oi.order_item_id = v_item_id;
 
-    IF v_rate <= 0 THEN
+    IF v_item_qty <= 0 THEN
+      ROLLBACK; SET p_result = 'INVALID_ORDER_QUANTITY';
+      LEAVE proc_body;
+    END IF;
+
+    IF v_rate IS NULL OR v_rate <= 0 THEN
       ROLLBACK; SET p_result = 'INVALID_PRODUCT_SPACE_RATE';
       IF p_user_id IS NOT NULL THEN
         INSERT INTO audit_log (user_id, action, entity_id, outcome, entity_name)
@@ -147,7 +154,8 @@ proc_body: BEGIN
        WHERE tt.origin_station_id = v_kandy_station
          AND tt.destination_station_id = v_dest_station
          AND tt.status = 'SCHEDULED'
-         AND tt.departure_datetime > NOW()
+         AND NOT EXISTS (SELECT 1 FROM manifest m WHERE m.trip_id=tt.trip_id AND m.status='RECEIVED')
+         AND tt.departure_datetime > CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')
          AND tt.arrival_datetime < v_delivery_date + INTERVAL 1 DAY
          AND (tt.departure_datetime > v_last_dep
               OR (tt.departure_datetime = v_last_dep AND tt.trip_id > v_last_trip))

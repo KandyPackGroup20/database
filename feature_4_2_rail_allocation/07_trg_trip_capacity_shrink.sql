@@ -11,7 +11,7 @@ BEGIN
 
   IF NEW.total_capacity < OLD.total_capacity THEN
     SELECT COALESCE(SUM(allocated_space), 0) INTO v_used
-      FROM rail_allocation WHERE trip_id = OLD.trip_id;
+      FROM rail_allocation WHERE trip_id = OLD.trip_id FOR SHARE;
 
     IF NEW.total_capacity < v_used THEN
       SIGNAL SQLSTATE '45000'

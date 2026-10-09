@@ -86,7 +86,8 @@ proc_body: BEGIN
       JOIN order_item oi ON oi.order_item_id = ra.order_item_id
       JOIN train_trip tt ON tt.trip_id = ra.trip_id
      WHERE oi.order_id = p_order_id
-       AND (tt.status <> 'SCHEDULED' OR tt.departure_datetime <= NOW());
+       AND (tt.status <> 'SCHEDULED' OR tt.departure_datetime <= CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30')
+            OR EXISTS (SELECT 1 FROM manifest m WHERE m.trip_id=tt.trip_id AND m.status='RECEIVED'));
 
     IF v_invalid_trip_count > 0 THEN
         ROLLBACK;
