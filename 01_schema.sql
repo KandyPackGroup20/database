@@ -190,13 +190,20 @@ CREATE TABLE inventory (
 -- 13b. STOCK_ADJUSTMENT (Feature 4.4 - damaged / missing / manual stock changes)
 CREATE TABLE stock_adjustment (
     adjustment_id INT AUTO_INCREMENT PRIMARY KEY,
-    inventory_id INT NOT NULL,
-    quantity_delta INT NOT NULL,
+    station_id INT NULL,
+    product_id INT NULL,
+    quantity_adjusted INT NULL DEFAULT 0,
+    inventory_id INT NULL,
+    quantity_delta INT NULL DEFAULT 0,
     reason VARCHAR(255) NOT NULL,
+    reported_by INT NULL,
     adjusted_by INT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     adjusted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT chk_adjustment_nonzero CHECK (quantity_delta <> 0),
-    FOREIGN KEY (inventory_id) REFERENCES inventory(inventory_id),
+    FOREIGN KEY (station_id) REFERENCES station_store(station_id) ON DELETE CASCADE,
+    FOREIGN KEY (product_id) REFERENCES product(product_id) ON DELETE CASCADE,
+    FOREIGN KEY (inventory_id) REFERENCES inventory(inventory_id) ON DELETE SET NULL,
+    FOREIGN KEY (reported_by) REFERENCES user(user_id) ON DELETE SET NULL,
     FOREIGN KEY (adjusted_by) REFERENCES user(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
@@ -276,20 +283,6 @@ CREATE TABLE audit_log (
             AND occurred_at IS NOT NULL
         )
     )
-) ENGINE=InnoDB;
-
--- 19. STOCK_ADJUSTMENT (Feature 4.4 / Store Manager & Warehouse Staff)
-CREATE TABLE IF NOT EXISTS stock_adjustment (
-    adjustment_id INT AUTO_INCREMENT PRIMARY KEY,
-    station_id INT NOT NULL,
-    product_id INT NOT NULL,
-    quantity_adjusted INT NOT NULL,
-    reason VARCHAR(255) NOT NULL,
-    reported_by INT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (station_id) REFERENCES station_store(station_id) ON DELETE CASCADE,
-    FOREIGN KEY (product_id) REFERENCES product(product_id) ON DELETE CASCADE,
-    FOREIGN KEY (reported_by) REFERENCES user(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 -- 20. NOTIFICATION (Real-time Logistics Alerts & Notification History)

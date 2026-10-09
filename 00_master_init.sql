@@ -280,15 +280,21 @@ CREATE TABLE audit_log (
 -- 19. STOCK_ADJUSTMENT (Feature 4.4 / Store Manager & Warehouse Staff)
 CREATE TABLE IF NOT EXISTS stock_adjustment (
     adjustment_id INT AUTO_INCREMENT PRIMARY KEY,
-    station_id INT NOT NULL,
-    product_id INT NOT NULL,
-    quantity_adjusted INT NOT NULL,
+    station_id INT NULL,
+    product_id INT NULL,
+    quantity_adjusted INT NULL DEFAULT 0,
+    inventory_id INT NULL,
+    quantity_delta INT NULL DEFAULT 0,
     reason VARCHAR(255) NOT NULL,
     reported_by INT NULL,
+    adjusted_by INT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    adjusted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (station_id) REFERENCES station_store(station_id) ON DELETE CASCADE,
     FOREIGN KEY (product_id) REFERENCES product(product_id) ON DELETE CASCADE,
-    FOREIGN KEY (reported_by) REFERENCES user(user_id) ON DELETE SET NULL
+    FOREIGN KEY (inventory_id) REFERENCES inventory(inventory_id) ON DELETE SET NULL,
+    FOREIGN KEY (reported_by) REFERENCES user(user_id) ON DELETE SET NULL,
+    FOREIGN KEY (adjusted_by) REFERENCES user(user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 -- 20. NOTIFICATION (Real-time Logistics Alerts & Notification History)
@@ -439,7 +445,21 @@ JOIN order_item oi ON co.order_id = oi.order_id
 JOIN rail_allocation ra ON oi.order_item_id = ra.order_item_id
 GROUP BY ss.city, YEAR(co.order_date), QUARTER(co.order_date);
 
-     
+CREATE OR REPLACE VIEW v_trip_capacity_usage AS
+SELECT 
+    tt.trip_id,
+    tt.origin_station_id,
+    tt.destination_station_id,
+    tt.departure_datetime,
+    tt.status,
+    tt.total_capacity,
+    COALESCE(SUM(ra.allocated_space), 0) AS used_space,
+    tt.total_capacity - COALESCE(SUM(ra.allocated_space), 0) AS remaining_space,
+    ROUND((COALESCE(SUM(ra.allocated_space), 0) / tt.total_capacity) * 100, 2) AS utilisation_pct
+FROM train_trip tt
+LEFT JOIN rail_allocation ra ON tt.trip_id = ra.trip_id
+GROUP BY tt.trip_id, tt.origin_station_id, tt.destination_station_id, tt.departure_datetime, tt.status, tt.total_capacity;
+
 CREATE SQL SECURITY INVOKER VIEW v_roster_duty_intervals AS
     SELECT
         roster_id,

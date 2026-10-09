@@ -58,9 +58,11 @@ CREATE TRIGGER trg_apply_stock_adjustment
 AFTER INSERT ON stock_adjustment
 FOR EACH ROW
 BEGIN
-    UPDATE inventory
-    SET stored_quantity = stored_quantity + NEW.quantity_delta
-    WHERE inventory_id = NEW.inventory_id;
+    IF NEW.inventory_id IS NOT NULL AND NEW.quantity_delta IS NOT NULL THEN
+        UPDATE inventory
+        SET stored_quantity = stored_quantity + NEW.quantity_delta
+        WHERE inventory_id = NEW.inventory_id;
+    END IF;
 END //
 
 DELIMITER ;
