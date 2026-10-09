@@ -3,6 +3,8 @@ CREATE DATABASE IF NOT EXISTS kandypack_db;
 USE kandypack_db;
 
 -- Drop existing tables in reverse dependency order if resetting
+DROP TABLE IF EXISTS notification;
+DROP TABLE IF EXISTS stock_adjustment;
 DROP TABLE IF EXISTS audit_log;
 DROP TABLE IF EXISTS delivery;
 DROP TABLE IF EXISTS roster_assignment;
@@ -116,7 +118,7 @@ CREATE TABLE order_item (
     order_id INT NOT NULL,
     product_id INT NOT NULL,
     quantity INT NOT NULL,
-    unit_price_at_order DECIMAL(10,2) NOT NULL,
+    unit_price_at_order DECIMAL(10,2) NOT NULL DEFAULT 0.00,
 
     FOREIGN KEY (order_id)
         REFERENCES customer_order(order_id)
@@ -264,6 +266,25 @@ CREATE TABLE IF NOT EXISTS stock_adjustment (
     FOREIGN KEY (station_id) REFERENCES station_store(station_id) ON DELETE CASCADE,
     FOREIGN KEY (product_id) REFERENCES product(product_id) ON DELETE CASCADE,
     FOREIGN KEY (reported_by) REFERENCES user(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- 20. NOTIFICATION (Real-time Logistics Alerts & Notification History)
+CREATE TABLE IF NOT EXISTS notification (
+    notification_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NULL,
+    recipient_email VARCHAR(255) NOT NULL,
+    notification_type VARCHAR(50) NOT NULL DEFAULT 'NEW_CONSIGNMENT',
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    order_id INT NULL,
+    is_read TINYINT DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_notification_user (user_id),
+    INDEX idx_notification_order (order_id),
+    INDEX idx_notification_read (is_read),
+    INDEX idx_notification_time (created_at DESC),
+    FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE SET NULL,
+    FOREIGN KEY (order_id) REFERENCES customer_order(order_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- 2. VIEWS

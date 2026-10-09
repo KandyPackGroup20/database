@@ -124,7 +124,7 @@ CREATE TABLE order_item (
     order_id INT NOT NULL,
     product_id INT NOT NULL,
     quantity INT NOT NULL,
-    unit_price_at_order DECIMAL(10,2) NOT NULL,
+    unit_price_at_order DECIMAL(10,2) NOT NULL DEFAULT 0.00,
 
     FOREIGN KEY (order_id)
         REFERENCES customer_order(order_id)
