@@ -29,6 +29,10 @@ CREATE TRIGGER trg_user_account_creation_policy
 BEFORE INSERT ON user
 FOR EACH ROW
 BEGIN
+    IF COALESCE(@kandypack_staff_provisioning, 0) = 1 AND NEW.role = 'CUSTOMER' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'SECURITY POLICY VIOLATION: Staff provisioning cannot create customers.';
+    END IF;
     -- Force staff accounts to reset password on first login
     IF NEW.role != 'CUSTOMER' THEN
         SET NEW.force_password_reset = 1;
