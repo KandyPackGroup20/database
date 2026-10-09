@@ -109,6 +109,9 @@ GRANT EXECUTE ON PROCEDURE kandypack_db.sp_allocate_rail_capacity TO 'role_logis
 -- to help them forecast seasonal freight demand by route and product.
 GRANT SELECT ON kandypack_db.v_quarterly_sales TO 'role_logistics_mgr';
 GRANT SELECT ON kandypack_db.v_top_quarterly_items TO 'role_logistics_mgr';
+GRANT SELECT ON kandypack_db.v_stock_adjustment_summary TO 'role_logistics_mgr';
+
+
 
       
 -- Role: DISPATCHER (Truck roster scheduling, driver/assistant assignment)
@@ -135,6 +138,8 @@ GRANT SELECT, INSERT, UPDATE ON kandypack_db.inventory TO 'role_store_mgr';
 GRANT SELECT, INSERT ON kandypack_db.stock_adjustment TO 'role_store_mgr';
 GRANT SELECT ON kandypack_db.v_station_inventory TO 'role_store_mgr';
 GRANT SELECT ON kandypack_db.v_incoming_train_manifests TO 'role_store_mgr';
+GRANT SELECT ON kandypack_db.v_trip_manifest_items TO 'role_store_mgr';
+GRANT SELECT ON kandypack_db.v_stock_adjustment_summary TO 'role_store_mgr';
 GRANT EXECUTE ON PROCEDURE kandypack_db.sp_receive_manifest TO 'role_store_mgr';
 
       
@@ -143,6 +148,7 @@ GRANT EXECUTE ON PROCEDURE kandypack_db.sp_receive_manifest TO 'role_store_mgr';
 GRANT SELECT ON kandypack_db.storage_location TO 'role_warehouse_staff';
 GRANT SELECT ON kandypack_db.v_station_inventory TO 'role_warehouse_staff';
 GRANT SELECT ON kandypack_db.v_incoming_train_manifests TO 'role_warehouse_staff';
+GRANT SELECT ON kandypack_db.v_trip_manifest_items TO 'role_warehouse_staff';
 GRANT INSERT ON kandypack_db.stock_adjustment TO 'role_warehouse_staff';
 
       
