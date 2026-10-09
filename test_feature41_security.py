@@ -48,7 +48,7 @@ def print_header(title):
 def test_1_sqli_neutralization():
     print_header("DEMO 1: SQL INJECTION NEUTRALIZATION (PREPARED STATEMENT DISCIPLINE)")
     
-    print("[*] Scenario: Attacker attempts classic SQL Injection on Login query:")
+    print("[*] Scenario: Attacker attempts classic SQL Injection on  query:")
     malicious_payload = "admin@kandypack.lk' OR '1'='1"
     
     print(f"    Payload: {malicious_payload}")

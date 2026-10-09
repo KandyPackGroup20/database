@@ -113,6 +113,9 @@ LEFT JOIN delivery_route dr ON c.route_id = dr.route_id
 LEFT JOIN station_store ss ON dr.station_id = ss.station_id;
 
 -- 7. Quarterly Sales Summary View (Feature 4.1 / Report 1)
+-- "How many units and how much revenue were delivered across each delivery 
+-- route and product per quarter, what are the route subtotals, and what is 
+-- the overall grand total?"
 CREATE OR REPLACE VIEW v_quarterly_sales AS
 SELECT
     IFNULL(dr.route_name, 'TOTAL_ALL_ROUTES') AS route_name,

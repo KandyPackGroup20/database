@@ -124,8 +124,14 @@ CREATE TABLE order_item (
     order_id INT NOT NULL,
     product_id INT NOT NULL,
     quantity INT NOT NULL,
-    FOREIGN KEY (order_id) REFERENCES customer_order(order_id) ON DELETE CASCADE,
-    FOREIGN KEY (product_id) REFERENCES product(product_id)
+    unit_price_at_order DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+
+    FOREIGN KEY (order_id)
+        REFERENCES customer_order(order_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (product_id)
+        REFERENCES product(product_id)
 ) ENGINE=InnoDB;
 
 -- 10. ORDER_STATUS_HISTORY
@@ -209,6 +215,7 @@ CREATE TABLE delivery_staff (
     user_id INT NOT NULL,
     license_number VARCHAR(100) NOT NULL,
     work_hours DECIMAL(5, 2) DEFAULT 0.00,
+    CONSTRAINT uq_delivery_staff_user UNIQUE (user_id),
     FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 

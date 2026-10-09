@@ -3,6 +3,8 @@ CREATE DATABASE IF NOT EXISTS kandypack_db;
 USE kandypack_db;
 
 -- Drop existing tables in reverse dependency order if resetting
+DROP TABLE IF EXISTS notification;
+DROP TABLE IF EXISTS stock_adjustment;
 DROP TABLE IF EXISTS audit_log;
 DROP TABLE IF EXISTS delivery;
 DROP TABLE IF EXISTS roster_assignment;
@@ -119,8 +121,14 @@ CREATE TABLE order_item (
     order_id INT NOT NULL,
     product_id INT NOT NULL,
     quantity INT NOT NULL,
-    FOREIGN KEY (order_id) REFERENCES customer_order(order_id) ON DELETE CASCADE,
-    FOREIGN KEY (product_id) REFERENCES product(product_id)
+    unit_price_at_order DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+
+    FOREIGN KEY (order_id)
+        REFERENCES customer_order(order_id)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (product_id)
+        REFERENCES product(product_id)
 ) ENGINE=InnoDB;
 
 -- 10. ORDER_STATUS_HISTORY
@@ -204,6 +212,7 @@ CREATE TABLE delivery_staff (
     user_id INT NOT NULL,
     license_number VARCHAR(100) NOT NULL,
     work_hours DECIMAL(5, 2) DEFAULT 0.00,
+    CONSTRAINT uq_delivery_staff_user UNIQUE (user_id),
     FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
@@ -222,6 +231,8 @@ CREATE TABLE roster_assignment (
     end_time DATETIME NOT NULL,
     status VARCHAR(50) DEFAULT 'SCHEDULED',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_roster_assignment_interval CHECK (end_time > start_time),
+    CONSTRAINT chk_roster_assignment_people CHECK (driver_id <> assistant_id),
     FOREIGN KEY (route_id) REFERENCES delivery_route(route_id),
     FOREIGN KEY (truck_id) REFERENCES truck(truck_id),
     FOREIGN KEY (driver_id) REFERENCES delivery_staff(delivery_staff_id),
@@ -278,6 +289,25 @@ CREATE TABLE IF NOT EXISTS stock_adjustment (
     FOREIGN KEY (station_id) REFERENCES station_store(station_id) ON DELETE CASCADE,
     FOREIGN KEY (product_id) REFERENCES product(product_id) ON DELETE CASCADE,
     FOREIGN KEY (reported_by) REFERENCES user(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- 20. NOTIFICATION (Real-time Logistics Alerts & Notification History)
+CREATE TABLE IF NOT EXISTS notification (
+    notification_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NULL,
+    recipient_email VARCHAR(255) NOT NULL,
+    notification_type VARCHAR(50) NOT NULL DEFAULT 'NEW_CONSIGNMENT',
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    order_id INT NULL,
+    is_read TINYINT DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_notification_user (user_id),
+    INDEX idx_notification_order (order_id),
+    INDEX idx_notification_read (is_read),
+    INDEX idx_notification_time (created_at DESC),
+    FOREIGN KEY (user_id) REFERENCES user(user_id) ON DELETE SET NULL,
+    FOREIGN KEY (order_id) REFERENCES customer_order(order_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- 2. VIEWS
@@ -410,6 +440,41 @@ JOIN rail_allocation ra ON oi.order_item_id = ra.order_item_id
 GROUP BY ss.city, YEAR(co.order_date), QUARTER(co.order_date);
 
      
+CREATE SQL SECURITY INVOKER VIEW v_roster_duty_intervals AS
+    SELECT
+        roster_id,
+        route_id,
+        truck_id,
+        driver_id AS staff_id,
+        'DRIVER' AS duty_type,
+        start_time,
+        end_time,
+        status,
+        CASE
+            WHEN status = 'CANCELLED' THEN 0
+            WHEN status IN ('SCHEDULED', 'IN_TRANSIT', 'COMPLETED') THEN 1
+            ELSE NULL
+        END AS is_counted
+    FROM roster_assignment
+
+    UNION ALL
+
+    SELECT
+        roster_id,
+        route_id,
+        truck_id,
+        assistant_id AS staff_id,
+        'ASSISTANT' AS duty_type,
+        start_time,
+        end_time,
+        status,
+        CASE
+            WHEN status = 'CANCELLED' THEN 0
+            WHEN status IN ('SCHEDULED', 'IN_TRANSIT', 'COMPLETED') THEN 1
+            ELSE NULL
+        END AS is_counted
+    FROM roster_assignment;
+
 -- 3. STORED PROCEDURES
      
 DELIMITER //
@@ -796,6 +861,26 @@ BEGIN
     END IF;
 END //
 
+DROP TRIGGER IF EXISTS trg_roster_assignment_request_immutable//
+CREATE TRIGGER trg_roster_assignment_request_immutable
+BEFORE UPDATE ON roster_assignment
+FOR EACH ROW
+BEGIN
+    IF NOT (OLD.roster_id <=> NEW.roster_id)
+       OR NOT (OLD.request_key <=> NEW.request_key)
+       OR NOT (OLD.route_id <=> NEW.route_id)
+       OR NOT (OLD.truck_id <=> NEW.truck_id)
+       OR NOT (OLD.driver_id <=> NEW.driver_id)
+       OR NOT (OLD.assistant_id <=> NEW.assistant_id)
+       OR NOT (OLD.dispatcher_id <=> NEW.dispatcher_id)
+       OR NOT (OLD.start_time <=> NEW.start_time)
+       OR NOT (OLD.end_time <=> NEW.end_time)
+       OR NOT (OLD.created_at <=> NEW.created_at) THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Roster assignment request facts are immutable';
+    END IF;
+END //
+
 DELIMITER ;
 
      
@@ -804,6 +889,12 @@ DELIMITER ;
 CREATE INDEX idx_train_trip_alloc ON train_trip (destination_station_id, status, departure_datetime);
 CREATE INDEX idx_customer_order_status_date ON customer_order (status, order_date);
 CREATE INDEX idx_roster_time_overlap ON roster_assignment (status, start_time, end_time, truck_id, driver_id, assistant_id);
+CREATE INDEX idx_roster_truck_window
+    ON roster_assignment (truck_id, status, start_time, end_time);
+CREATE INDEX idx_roster_driver_window
+    ON roster_assignment (driver_id, status, start_time, end_time);
+CREATE INDEX idx_roster_assistant_window
+    ON roster_assignment (assistant_id, status, start_time, end_time);
 CREATE INDEX idx_storage_loc_search ON storage_location (station_id, location_code);
 
      
@@ -889,6 +980,9 @@ INSERT INTO truck (truck_id, plate_number, capacity) VALUES
 (2, 'WP-CAB-1002', 3500.00),
 (3, 'SP-CAB-2001', 5000.00);
 
+-- MySQL client includes; run this script from the database directory.
+SOURCE 02_views.sql
+
 INSERT INTO delivery_staff (delivery_staff_id, user_id, license_number, work_hours) VALUES
 (1, 6, 'LIC-D-101', 38.00),
 (2, 7, 'LIC-D-102', 27.00),
@@ -896,7 +990,6 @@ INSERT INTO delivery_staff (delivery_staff_id, user_id, license_number, work_hou
 (4, 9, 'LIC-A-201', 45.00),
 (5, 10, 'LIC-A-202', 58.00),
 (6, 11, 'LIC-A-203', 33.00);
-
 -- 12. INVENTORY (Feature 4.4 - starting stock per station/product)
 INSERT INTO inventory (inventory_id, station_id, product_id, location_id, stored_quantity) VALUES
 (1, 1, 1, 1, 500),
@@ -920,7 +1013,6 @@ INSERT INTO manifest (manifest_id, station_id, trip_id, received_at, status) VAL
 (3, 3, 3, NULL, 'PENDING');
 
 -- MySQL client includes; run this script from the database directory.
-SOURCE 02_views.sql
 SOURCE 09_roster_assignment.sql
 SOURCE 10_roster_reporting.sql
 
