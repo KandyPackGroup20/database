@@ -1,300 +1,34 @@
-USE kandypack_db;
+﻿-- Read-only report examples. Select the intended schema explicitly.
+-- Prerequisites: 10_roster_reporting.sql and 17_phase5_reporting.sql.
+-- The HTTP reports preserve /api/v1/reports/* and SUPERADMIN authorization.
 
--- =======================================================
--- REPORT 1: Quarterly Sales by Route and Product
--- Uses ROLLUP for subtotal / grand-total reporting
--- =======================================================
+-- 1. Quarterly booked sales, route/product ROLLUP, historical prices.
+SELECT * FROM v_report_quarterly_sales ORDER BY sales_year,sales_quarter,route_id,product_id;
 
-SELECT
-    sales_year,
-    sales_quarter,
-    IFNULL(route_name, 'ALL_ROUTES') AS route_name,
-    IFNULL(product_name, 'ALL_PRODUCTS') AS product_name,
-    total_quantity,
-    total_sales
-FROM (
-    SELECT
-        YEAR(co.order_date) AS sales_year,
-        QUARTER(co.order_date) AS sales_quarter,
-        dr.route_name,
-        p.product_name,
-        SUM(oi.quantity) AS total_quantity,
-        ROUND(
-            SUM(oi.quantity * oi.unit_price_at_order),
-            2
-        ) AS total_sales
-    FROM customer_order co
-    JOIN customer c
-        ON co.customer_id = c.customer_id
-    LEFT JOIN delivery_route dr
-        ON co.delivery_route_id = dr.route_id
-    JOIN order_item oi
-        ON co.order_id = oi.order_id
-    JOIN product p
-        ON oi.product_id = p.product_id
-    GROUP BY
-        YEAR(co.order_date),
-        QUARTER(co.order_date),
-        dr.route_name,
-        p.product_name
-    WITH ROLLUP
-) AS quarterly_sales;
+-- 2. Dense ranks partitioned by BOTH year and quarter (ties retained).
+SELECT * FROM v_report_top_products WHERE product_rank=1 ORDER BY sales_year,sales_quarter,product_id;
 
+-- 3. Station x month CUBE equivalent (MySQL 8 UNION ALL grouping sets).
+SELECT * FROM v_report_rail_capacity ORDER BY dep_year,dep_month,station_id,row_level;
 
--- =======================================================
--- REPORT 2: Top-Selling Products per Quarter
--- Uses DENSE_RANK window function
--- =======================================================
+-- 4. Dated Colombo week, clipped to each boundary, using the existing roster policy.
+-- Supply a Monday. The API validates it and also includes active zero-hour staff.
+SET @report_week_start = DATE_SUB(CURRENT_DATE, INTERVAL WEEKDAY(CURRENT_DATE) DAY);
+SET @report_week_end = DATE_ADD(@report_week_start, INTERVAL 7 DAY);
+PREPARE workforce_report FROM '
+SELECT staff_id,duty_type,SUM(TIMESTAMPDIFF(SECOND,GREATEST(start_time,?),LEAST(end_time,?)))/3600 AS scheduled_hours,
+       CASE WHEN duty_type=''DRIVER'' THEN 40 ELSE 60 END AS weekly_cap
+FROM v_roster_duty_intervals
+WHERE start_time < ? AND end_time > ? AND is_counted=1
+GROUP BY staff_id,duty_type ORDER BY staff_id,duty_type';
+EXECUTE workforce_report USING @report_week_start,@report_week_end,@report_week_end,@report_week_start;
+DEALLOCATE PREPARE workforce_report;
 
-WITH quarterly_product_sales AS (
-    SELECT
-        YEAR(co.order_date) AS sales_year,
-        QUARTER(co.order_date) AS sales_quarter,
-        p.product_id,
-        p.product_name,
-        SUM(oi.quantity) AS total_quantity,
-        ROUND(
-            SUM(oi.quantity * oi.unit_price_at_order),
-            2
-        ) AS total_sales
-    FROM customer_order co
-    JOIN order_item oi
-        ON co.order_id = oi.order_id
-    JOIN product p
-        ON oi.product_id = p.product_id
-    GROUP BY
-        YEAR(co.order_date),
-        QUARTER(co.order_date),
-        p.product_id,
-        p.product_name
-),
-ranked_products AS (
-    SELECT
-        *,
-        DENSE_RANK() OVER (
-            PARTITION BY sales_year, sales_quarter
-            ORDER BY total_quantity DESC
-        ) AS product_rank
-    FROM quarterly_product_sales
-)
+-- 5. Monthly truck hours ROLLUP; crossing duties are clipped to each month.
+SELECT * FROM v_report_truck_utilisation ORDER BY usage_year,usage_month,truck_id;
 
-SELECT
-    sales_year,
-    sales_quarter,
-    product_id,
-    product_name,
-    total_quantity,
-    total_sales,
-    product_rank
-FROM ranked_products
-WHERE product_rank = 1
-ORDER BY
-    sales_year,
-    sales_quarter;
+-- 6. Station-product stock, receipts and adjustments. Stock already includes adjustments.
+SELECT * FROM v_report_station_inventory ORDER BY station_id,product_id;
 
--- =======================================================
--- REPORT 3: City-wise and Route-wise Sales
--- =======================================================
-
-SELECT
-    ss.city AS city_name,
-    dr.route_name,
-    SUM(oi.quantity) AS total_quantity,
-    ROUND(
-        SUM(oi.quantity * oi.unit_price_at_order),
-        2
-    ) AS total_sales
-FROM customer_order co
-
-JOIN customer c
-    ON co.customer_id = c.customer_id
-
-JOIN delivery_route dr
-    ON co.delivery_route_id = dr.route_id
-
-JOIN station_store ss
-    ON dr.station_id = ss.station_id
-
-JOIN order_item oi
-    ON co.order_id = oi.order_id
-
-GROUP BY
-    ss.city,
-    dr.route_name
-
-ORDER BY
-    ss.city,
-    dr.route_name;
-
--- =======================================================
--- REPORT 4: Driver and Assistant Weekly Working Hours
--- =======================================================
-
-SELECT
-    ds.delivery_staff_id,
-    u.name AS staff_name,
-    u.role AS staff_role,
-
-    YEARWEEK(ra.start_time, 1) AS work_week,
-
-    ROUND(
-        SUM(
-            TIMESTAMPDIFF(
-                MINUTE,
-                ra.start_time,
-                ra.end_time
-            )
-        ) / 60.0,
-        2
-    ) AS scheduled_hours,
-
-    CASE
-        WHEN u.role = 'DRIVER' THEN 40.00
-        WHEN u.role = 'ASSISTANT' THEN 60.00
-    END AS weekly_cap,
-
-    CASE
-        WHEN u.role = 'DRIVER'
-             AND SUM(TIMESTAMPDIFF(MINUTE,ra.start_time,ra.end_time))/60.0 >= 40
-            THEN 'CAP_REACHED'
-
-        WHEN u.role = 'ASSISTANT'
-             AND SUM(TIMESTAMPDIFF(MINUTE,ra.start_time,ra.end_time))/60.0 >= 60
-            THEN 'CAP_REACHED'
-
-        ELSE 'SAFE'
-    END AS status_flag
-
-FROM roster_assignment ra
-
-JOIN delivery_staff ds
-    ON (
-        ra.driver_id = ds.delivery_staff_id
-        OR ra.assistant_id = ds.delivery_staff_id
-    )
-
-JOIN user u
-    ON ds.user_id = u.user_id
-
-WHERE
-    u.role IN ('DRIVER','ASSISTANT')
-    AND ra.status <> 'CANCELLED'
-
-GROUP BY
-    ds.delivery_staff_id,
-    u.name,
-    u.role,
-    YEARWEEK(ra.start_time,1)
-
-ORDER BY
-    work_week,
-    staff_name;
-
-
--- =======================================================
--- REPORT 5: Monthly Truck Usage
--- =======================================================
-
-SELECT
-    t.truck_id,
-    t.plate_number,
-
-    YEAR(ra.start_time) AS usage_year,
-    MONTH(ra.start_time) AS usage_month,
-
-    COUNT(ra.roster_id) AS total_delivery_runs,
-
-    ROUND(
-        COALESCE(
-            SUM(
-                TIMESTAMPDIFF(
-                    MINUTE,
-                    ra.start_time,
-                    ra.end_time
-                )
-            ) / 60.0,
-            0
-        ),
-        2
-    ) AS total_operating_hours
-
-FROM truck t
-
-JOIN roster_assignment ra
-    ON t.truck_id = ra.truck_id
-
-WHERE ra.status <> 'CANCELLED'
-
-GROUP BY
-    t.truck_id,
-    t.plate_number,
-    YEAR(ra.start_time),
-    MONTH(ra.start_time)
-
-ORDER BY
-    usage_year,
-    usage_month,
-    t.truck_id;
-
--- =======================================================
--- REPORT 6: Customer Order and Delivery History
--- =======================================================
-
-SELECT
-    co.order_id,
-    c.customer_name,
-    co.order_date,
-    co.delivery_date,
-    co.status AS order_status,
-
-    dr.route_name,
-
-    tt.trip_id,
-    tt.departure_datetime,
-    tt.arrival_datetime,
-
-    ra.allocated_quantity,
-    ra.allocated_space,
-    ra.allocated_at,
-
-    m.status AS manifest_status,
-    m.received_at,
-
-    t.plate_number,
-
-    d.delivery_status,
-    d.delivered_at,
-    d.proof_reference
-
-FROM customer_order co
-
-JOIN customer c
-    ON co.customer_id = c.customer_id
-
-LEFT JOIN delivery_route dr
-    ON co.delivery_route_id = dr.route_id
-
-LEFT JOIN order_item oi
-    ON co.order_id = oi.order_id
-
-LEFT JOIN rail_allocation ra
-    ON oi.order_item_id = ra.order_item_id
-
-LEFT JOIN train_trip tt
-    ON ra.trip_id = tt.trip_id
-
-LEFT JOIN manifest m
-    ON tt.trip_id = m.trip_id
-
-LEFT JOIN delivery d
-    ON co.order_id = d.order_id
-
-LEFT JOIN roster_assignment r
-    ON d.roster_id = r.roster_id
-
-LEFT JOIN truck t
-    ON r.truck_id = t.truck_id
-
-ORDER BY
-    co.order_id,
-    tt.departure_datetime;
+-- Legacy additional reports (city/route sales, customer delivery history) remain
+-- available through the existing city-route-sales and customer orders APIs.
