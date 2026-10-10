@@ -81,3 +81,38 @@ Deploy this SQL together with the backend/Frontend Phase 2 changes. Truck assign
 Approval: ready for Phase 2 code review subject to the recorded final test results and deployment/browser checks; no merge or deployment authorization is implied.
 
 Phase 2 completion result: **28/28 backend/MySQL tests passed** in the final complete run, including the corrected future-manifest backfill. Disposable schema cleanup completed. Migration source consistency and all repository diff checks passed. Existing-database deployment and browser verification remain pending.
+
+## Phase 4 member — Station Inventory & Regional Warehouse Operations (2026-10-10)
+
+All three repositories started clean on `fullworkflow`; earlier phases were preserved. No applicable AGENTS.md exists outside the unrelated archived checkout. Project-plan PDF text (§2.1, §3.4) confirms station/product inventory, location_id bins, manager_id station scoping and lightweight adjustments. No README, original prompt, commit, push, merge or main changes.
+
+### Reused contracts and verified defects
+
+Reused `station_store`, `inventory`, `storage_location`, `stock_adjustment`, `manifest`, existing views and `trg_apply_stock_adjustment`. Kept `sp_receive_manifest(station_id, trip_id, user_id, OUT result_code)` and versioned inventory endpoints. Prompt plural names, location_code column and two-argument procedure are conceptual targets, not replacements for working schema/contracts. Existing free-text reason supports recount corrections; DAMAGED/LOST/EXPIRED codes are supported without renaming the column or removing historical reasons.
+
+Receipt previously accepted empty/unarrived/wrong-destination cargo and could regress a closed order. It now locks the trip/manifest, validates Kandy origin and destination, ARRIVED status and elapsed arrival time, nonempty valid cargo, and locks affected orders. Product upserts are grouped and ordered. READ COMMITTED and order locks support spillover receipt: order/history advance only after all quantities are allocated and all related manifests are received. Closed/null order states roll back intake. No delivery completion or inventory deduction at dispatch was added.
+
+The project plan requires staff department scoping, but no warehouse assignment existed. The clarification question received no answer; explicit station assignment was selected from the plan rather than granting all-station access. Added nullable `user.station_id` FK for warehouse staff; managers keep `station_store.manager_id`. Existing accounts are not guessed/backfilled. Added nullable unique `stock_adjustment.request_key` to support retry-safe adjustments without changing existing callers or rows.
+
+### Changed files and deployment
+
+- `01_schema.sql`: warehouse assignment FK and optional adjustment request key for fresh initialization.
+- `03_procedures.sql`: receipt validation, locking, complete-order advancement and rollback guards.
+- `00_master_init.sql`: synchronized canonical schema/procedure changes.
+- `build_phase4_migration.py`: generates selected-database migration; `--check` verifies source consistency.
+- `16_phase4_station_workflow.sql`: repeatable, non-destructive additions plus procedure replacement.
+- `workflow-test.md`: this record.
+
+Before deploying matching backend/frontend, select the intended database and run `16_phase4_station_workflow.sql` during a pause in station writes (MySQL DDL commits independently). Do NOT rerun `01_schema.sql` or `00_master_init.sql` on an existing database. Migration does not reset stock, seed data or invent receipts. It was executed only in disposable test schemas here.
+
+Assign existing managers using `station_store.manager_id`. For existing warehouse staff, an administrator must explicitly set `user.station_id` to an approved active station, verifying user role and IDs first. New warehouse accounts can use the existing SuperAdmin provisioning form's station selector, backed by optional `station_id` in the staff API. Null/unassigned staff are denied station data. No extra account provisioning system was created.
+
+### Actual verification and remaining issues
+
+Backend command: `.venv/Scripts/python.exe -m unittest discover -s tests -p test_phase4_inventory.py -v` from backend: **43/43 passed**, 69.267 seconds, comprising 9 Phase 4 tests plus 34 inherited identity/rail/roster tests. Uses real FastAPI and MySQL in generated `kandypack_phase1_test_92efcbb5e14549b3905d4e7b08759b04`, then drops only that schema. Tests cover scoping, duplicate/concurrent intake, injected late failure rollback, empty/premature/wrong destination rejection, closed-order rejection, adjustment replay/conflict/underflow/concurrency, report totals, bin replay/cross-station rejection and warehouse provisioning. Migration tested twice, including adding fields to a simulated pre-Phase-4 shape inside the disposable schema while preserving stock. After the final null-status guard refinement, the affected receipt subset was rerun; result recorded below.
+
+`build_phase4_migration.py --check` and all repository `git diff --check` passed. Existing adjustment trigger and nonnegative constraint were reused and exercised. The routine owns its transaction; backend explicitly ends its authorization-read transaction before calling it. An expected injected failure in the inherited roster test is logged but passes rollback assertions.
+
+Remaining deployment prerequisites: apply migration, populate approved legacy warehouse assignments, deploy all matching repositories. Browser runtime has no connected browser, so interactive UI/live proxy verification remains pending. Customer delivery completion and broader reporting certification remain outside this member's scope. No existing database was reset or modified.
+
+Phase 4 completion: final affected receipt rerun (`-k receipt`) **4/4 passed** in 9.531 seconds after null-state hardening, including spillover receipt, concurrent/rollback receipt, cancelled/null order rejection and roster receipt handoff. Disposable schema `kandypack_phase1_test_d73d287f4e874099be301d3368684a12` was cleaned up. Migration generation check passed. Full suite result remains the 43/43 run above; the four tests are a rerun, not four additional distinct tests.

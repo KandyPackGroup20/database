@@ -61,6 +61,9 @@ CREATE TABLE station_store (
 ) ENGINE=InnoDB;
 
 -- 4. STORAGE_LOCATION
+ALTER TABLE user ADD COLUMN station_id INT NULL,
+    ADD CONSTRAINT fk_user_station FOREIGN KEY (station_id) REFERENCES station_store(station_id);
+
 CREATE TABLE storage_location (
     location_id INT AUTO_INCREMENT PRIMARY KEY,
     station_id INT NOT NULL,
@@ -198,6 +201,8 @@ CREATE TABLE inventory (
 -- 13b. STOCK_ADJUSTMENT (Feature 4.4 - damaged / missing / manual stock changes)
 CREATE TABLE stock_adjustment (
     adjustment_id INT AUTO_INCREMENT PRIMARY KEY,
+    request_key VARCHAR(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin NULL,
+    CONSTRAINT uq_stock_adjustment_request UNIQUE (request_key),
     station_id INT NULL,
     product_id INT NULL,
     quantity_adjusted INT NULL DEFAULT 0,

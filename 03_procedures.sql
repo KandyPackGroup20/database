@@ -541,6 +541,10 @@ CREATE PROCEDURE sp_receive_manifest(
 PROC_BODY: BEGIN
     DECLARE v_manifest_id INT;
     DECLARE v_manifest_status VARCHAR(50);
+    DECLARE v_destination INT;
+    DECLARE v_origin VARCHAR(100);
+    DECLARE v_trip_status VARCHAR(50);
+    DECLARE v_arrival DATETIME;
 
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
@@ -548,7 +552,18 @@ PROC_BODY: BEGIN
         SET p_result_code = 'ERROR_TRANSACTION_FAILED';
     END;
 
+    SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
     START TRANSACTION;
+
+    SELECT t.destination_station_id, s.city, t.status, t.arrival_datetime
+    INTO v_destination, v_origin, v_trip_status, v_arrival
+    FROM train_trip t JOIN station_store s ON s.station_id=t.origin_station_id
+    WHERE t.trip_id=p_trip_id FOR UPDATE;
+    IF v_destination IS NULL OR v_destination<>p_station_id OR v_origin<>'Kandy' THEN
+        ROLLBACK;
+        SET p_result_code='INVALID_TRIP_DESTINATION';
+        LEAVE PROC_BODY;
+    END IF;
 
     -- 1. Lock and validate the manifest (stops two managers receiving it at once)
     SELECT manifest_id, status INTO v_manifest_id, v_manifest_status
@@ -568,6 +583,24 @@ PROC_BODY: BEGIN
         LEAVE PROC_BODY;
     END IF;
 
+    IF v_trip_status IS NULL OR v_trip_status<>'ARRIVED' OR v_arrival>NOW() THEN
+        ROLLBACK;
+        SET p_result_code='TRIP_NOT_ARRIVED';
+        LEAVE PROC_BODY;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM rail_allocation WHERE trip_id=p_trip_id) THEN
+        ROLLBACK;
+        SET p_result_code='MANIFEST_EMPTY';
+        LEAVE PROC_BODY;
+    END IF;
+    IF EXISTS (SELECT 1 FROM rail_allocation a JOIN order_item i ON i.order_item_id=a.order_item_id
+               JOIN customer_order o ON o.order_id=i.order_id JOIN delivery_route r ON r.route_id=o.delivery_route_id
+               WHERE a.trip_id=p_trip_id AND (a.allocated_quantity<=0 OR r.station_id<>p_station_id)) THEN
+        ROLLBACK;
+        SET p_result_code='INVALID_MANIFEST_CARGO';
+        LEAVE PROC_BODY;
+    END IF;
+
     -- 2. Add every allocated product/quantity into this station's stock
     add_stock: BEGIN
         DECLARE v_product_id INT;
@@ -575,10 +608,10 @@ PROC_BODY: BEGIN
         DECLARE done INT DEFAULT FALSE;
 
         DECLARE cur_items CURSOR FOR
-            SELECT oi.product_id, ra.allocated_quantity
+            SELECT oi.product_id, SUM(ra.allocated_quantity)
             FROM rail_allocation ra
             JOIN order_item oi ON ra.order_item_id = oi.order_item_id
-            WHERE ra.trip_id = p_trip_id;
+            WHERE ra.trip_id = p_trip_id GROUP BY oi.product_id ORDER BY oi.product_id;
         DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
 
         OPEN cur_items;
@@ -604,13 +637,14 @@ PROC_BODY: BEGIN
     advance_orders: BEGIN
         DECLARE v_order_id INT;
         DECLARE v_remaining_trips INT;
+        DECLARE v_order_status VARCHAR(50);
         DECLARE done2 INT DEFAULT FALSE;
 
         DECLARE cur_orders CURSOR FOR
             SELECT DISTINCT oi.order_id
             FROM rail_allocation ra
             JOIN order_item oi ON ra.order_item_id = oi.order_item_id
-            WHERE ra.trip_id = p_trip_id;
+            WHERE ra.trip_id = p_trip_id ORDER BY oi.order_id;
         DECLARE CONTINUE HANDLER FOR NOT FOUND SET done2 = TRUE;
 
         OPEN cur_orders;
@@ -618,15 +652,27 @@ PROC_BODY: BEGIN
             FETCH cur_orders INTO v_order_id;
             IF done2 THEN LEAVE order_loop; END IF;
 
+            SELECT status INTO v_order_status FROM customer_order
+            WHERE order_id=v_order_id FOR UPDATE;
+            IF v_order_status IS NULL OR v_order_status NOT IN ('SCHEDULED_FOR_RAIL','SCHEDULED_MULTI_TRIP') THEN
+                ROLLBACK;
+                SET p_result_code='INVALID_ORDER_STATE';
+                LEAVE PROC_BODY;
+            END IF;
+
             SELECT COUNT(*) INTO v_remaining_trips
             FROM rail_allocation ra2
             JOIN order_item oi2 ON ra2.order_item_id = oi2.order_item_id
             JOIN train_trip tt2 ON ra2.trip_id = tt2.trip_id
             LEFT JOIN manifest m2 ON m2.trip_id = tt2.trip_id AND m2.station_id = tt2.destination_station_id
             WHERE oi2.order_id = v_order_id
-              AND (m2.status IS NULL OR m2.status <> 'RECEIVED');
+              AND (m2.status IS NULL OR m2.status <> 'RECEIVED' OR m2.received_at IS NULL);
 
-            IF v_remaining_trips = 0 THEN
+            IF v_remaining_trips = 0 AND NOT EXISTS (
+                SELECT 1 FROM order_item oi WHERE oi.order_id=v_order_id
+                AND oi.quantity<>(SELECT COALESCE(SUM(a.allocated_quantity),0)
+                                  FROM rail_allocation a WHERE a.order_item_id=oi.order_item_id)
+            ) THEN
                 UPDATE customer_order
                 SET status = 'ARRIVED_AT_STATION_STORE'
                 WHERE order_id = v_order_id;
