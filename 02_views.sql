@@ -75,18 +75,19 @@ LEFT JOIN storage_location sl ON inv.location_id = sl.location_id;
 -- 5. Incoming Train Manifests View (Feature 4.1 / 4.4)
 CREATE OR REPLACE VIEW v_incoming_train_manifests AS
 SELECT
-    m.manifest_id,
-    m.station_id,
+    COALESCE(m.manifest_id, tt.trip_id) AS manifest_id,
+    tt.destination_station_id AS station_id,
     ss.city AS destination_station,
     tt.trip_id,
     tt.departure_datetime,
     tt.arrival_datetime,
     tt.status AS train_status,
-    m.status AS manifest_status,
+    COALESCE(m.status, 'PENDING') AS manifest_status,
     m.received_at
-FROM manifest m
-JOIN train_trip tt ON m.trip_id = tt.trip_id
-JOIN station_store ss ON m.station_id = ss.station_id;
+FROM train_trip tt
+JOIN station_store ss ON tt.destination_station_id = ss.station_id
+LEFT JOIN manifest m ON m.trip_id = tt.trip_id AND m.station_id = tt.destination_station_id
+WHERE tt.status IN ('SCHEDULED', 'IN_TRANSIT', 'ARRIVED');
 
 -- 5b. Incoming Train Cargo Items View (Feature 4.4 - Store Manager Cargo Inspection)
 CREATE OR REPLACE VIEW v_trip_manifest_items AS

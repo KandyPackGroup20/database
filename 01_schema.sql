@@ -33,6 +33,7 @@ CREATE TABLE user (
     password_hash VARCHAR(255) NOT NULL,
     force_password_reset TINYINT DEFAULT 0,
     is_active TINYINT DEFAULT 1,
+    station_id INT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_user_email UNIQUE (email)
 ) ENGINE=InnoDB;
@@ -224,6 +225,7 @@ CREATE TABLE truck (
     CONSTRAINT chk_truck_capacity CHECK (capacity > 0),
     CONSTRAINT chk_truck_capacity_unit CHECK (capacity_unit IS NULL OR capacity_unit = 'KG'),
     is_active TINYINT DEFAULT 1,
+    station_id INT NULL,
     CONSTRAINT uq_truck_plate UNIQUE (plate_number)
 ) ENGINE=InnoDB;
 
