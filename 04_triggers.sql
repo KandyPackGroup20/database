@@ -69,6 +69,33 @@ BEGIN
     END IF;
 END //
 
+-- 5. Business Rule: Orders must be placed at least 7 days in advance
+DROP TRIGGER IF EXISTS trg_enforce_7_day_advance_order//
+CREATE TRIGGER trg_enforce_7_day_advance_order
+BEFORE INSERT ON customer_order
+FOR EACH ROW
+BEGIN
+    IF NEW.delivery_date IS NOT NULL AND NEW.order_date IS NOT NULL THEN
+        IF DATEDIFF(NEW.delivery_date, NEW.order_date) < 7 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BUSINESS RULE VIOLATION: Orders must be placed at least 7 days in advance.';
+        END IF;
+    END IF;
+END //
+
+DROP TRIGGER IF EXISTS trg_enforce_7_day_advance_order_update//
+CREATE TRIGGER trg_enforce_7_day_advance_order_update
+BEFORE UPDATE ON customer_order
+FOR EACH ROW
+BEGIN
+    IF (NEW.delivery_date <> OLD.delivery_date OR NEW.order_date <> OLD.order_date) THEN
+        IF DATEDIFF(NEW.delivery_date, NEW.order_date) < 7 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'BUSINESS RULE VIOLATION: Orders must be placed at least 7 days in advance.';
+        END IF;
+    END IF;
+END //
+
 DELIMITER ;
 
 DELIMITER //

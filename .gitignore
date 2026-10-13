@@ -1,0 +1,10 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# PDFs and document artifacts
+*.pdf
+
+# Environment files
+.env
+.env.*
