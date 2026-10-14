@@ -216,7 +216,58 @@ BEGIN
     END IF;
 END //
 
--- 8. Feature 4.4 Stock Handling: Reserve and deduct station store inventory upon cargo assignment
+-- 8. Feature 4.4 Stock Handling: Validate sufficient inventory, deduct upon cargo assignment, and restore on cancellation
+DROP TRIGGER IF EXISTS trg_check_inventory_before_delivery//
+CREATE TRIGGER trg_check_inventory_before_delivery
+BEFORE INSERT ON delivery
+FOR EACH ROW
+BEGIN
+    DECLARE v_station_id INT;
+    DECLARE v_shortage_count INT DEFAULT 0;
+
+    -- Only check inventory for active (non-cancelled) deliveries
+    IF NEW.delivery_status <> 'CANCELLED' THEN
+        -- Resolve fulfillment station store from roster route or customer order route
+        SELECT dr.station_id INTO v_station_id
+        FROM roster_assignment ra
+        JOIN delivery_route dr ON dr.route_id = ra.route_id
+        WHERE ra.roster_id = NEW.roster_id
+        LIMIT 1;
+
+        IF v_station_id IS NULL THEN
+            SELECT dr.station_id INTO v_station_id
+            FROM customer_order co
+            JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
+            WHERE co.order_id = NEW.order_id
+            LIMIT 1;
+        END IF;
+
+        IF v_station_id IS NULL THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'INSUFFICIENT_STOCK: Destination station store could not be resolved for delivery order';
+        END IF;
+
+        -- Verify every product in the order has sufficient stock (aggregating multi-line items)
+        SELECT COUNT(*) INTO v_shortage_count
+        FROM (
+            SELECT oi.product_id, SUM(oi.quantity) AS required_qty
+            FROM order_item oi
+            WHERE oi.order_id = NEW.order_id
+            GROUP BY oi.product_id
+        ) req
+        LEFT JOIN inventory inv 
+            ON inv.station_id = v_station_id 
+           AND inv.product_id = req.product_id
+        WHERE inv.stored_quantity IS NULL 
+           OR inv.stored_quantity < req.required_qty;
+
+        IF v_shortage_count > 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'INSUFFICIENT_STOCK: Required inventory shortage or missing stock record at fulfillment station store';
+        END IF;
+    END IF;
+END //
+
 DROP TRIGGER IF EXISTS trg_deduct_inventory_on_delivery//
 CREATE TRIGGER trg_deduct_inventory_on_delivery
 AFTER INSERT ON delivery
@@ -224,26 +275,150 @@ FOR EACH ROW
 BEGIN
     DECLARE v_station_id INT;
 
-    -- Identify fulfillment station store from roster route or customer order route
-    SELECT dr.station_id INTO v_station_id
-    FROM roster_assignment ra
-    JOIN delivery_route dr ON dr.route_id = ra.route_id
-    WHERE ra.roster_id = NEW.roster_id
-    LIMIT 1;
-
-    IF v_station_id IS NULL THEN
+    IF NEW.delivery_status <> 'CANCELLED' THEN
         SELECT dr.station_id INTO v_station_id
-        FROM customer_order co
-        JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
-        WHERE co.order_id = NEW.order_id
+        FROM roster_assignment ra
+        JOIN delivery_route dr ON dr.route_id = ra.route_id
+        WHERE ra.roster_id = NEW.roster_id
         LIMIT 1;
-    END IF;
 
-    IF v_station_id IS NOT NULL THEN
-        UPDATE inventory inv
-        JOIN order_item oi ON oi.product_id = inv.product_id
-        SET inv.stored_quantity = GREATEST(0, inv.stored_quantity - oi.quantity)
-        WHERE oi.order_id = NEW.order_id AND inv.station_id = v_station_id;
+        IF v_station_id IS NULL THEN
+            SELECT dr.station_id INTO v_station_id
+            FROM customer_order co
+            JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
+            WHERE co.order_id = NEW.order_id
+            LIMIT 1;
+        END IF;
+
+        IF v_station_id IS NOT NULL THEN
+            UPDATE inventory inv
+            JOIN (
+                SELECT product_id, SUM(quantity) AS required_qty
+                FROM order_item
+                WHERE order_id = NEW.order_id
+                GROUP BY product_id
+            ) req ON req.product_id = inv.product_id
+            SET inv.stored_quantity = inv.stored_quantity - req.required_qty
+            WHERE inv.station_id = v_station_id;
+        END IF;
     END IF;
 END //
+
+DROP TRIGGER IF EXISTS trg_check_inventory_before_delivery_update//
+CREATE TRIGGER trg_check_inventory_before_delivery_update
+BEFORE UPDATE ON delivery
+FOR EACH ROW
+BEGIN
+    DECLARE v_station_id INT;
+    DECLARE v_shortage_count INT DEFAULT 0;
+
+    -- If un-cancelling a delivery, ensure sufficient inventory exists
+    IF OLD.delivery_status = 'CANCELLED' AND NEW.delivery_status <> 'CANCELLED' THEN
+        SELECT dr.station_id INTO v_station_id
+        FROM roster_assignment ra
+        JOIN delivery_route dr ON dr.route_id = ra.route_id
+        WHERE ra.roster_id = NEW.roster_id
+        LIMIT 1;
+
+        IF v_station_id IS NULL THEN
+            SELECT dr.station_id INTO v_station_id
+            FROM customer_order co
+            JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
+            WHERE co.order_id = NEW.order_id
+            LIMIT 1;
+        END IF;
+
+        IF v_station_id IS NULL THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'INSUFFICIENT_STOCK: Destination station store could not be resolved for delivery order';
+        END IF;
+
+        SELECT COUNT(*) INTO v_shortage_count
+        FROM (
+            SELECT oi.product_id, SUM(oi.quantity) AS required_qty
+            FROM order_item oi
+            WHERE oi.order_id = NEW.order_id
+            GROUP BY oi.product_id
+        ) req
+        LEFT JOIN inventory inv 
+            ON inv.station_id = v_station_id 
+           AND inv.product_id = req.product_id
+        WHERE inv.stored_quantity IS NULL 
+           OR inv.stored_quantity < req.required_qty;
+
+        IF v_shortage_count > 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'INSUFFICIENT_STOCK: Required inventory shortage or missing stock record at fulfillment station store';
+        END IF;
+    END IF;
+END //
+
+DROP TRIGGER IF EXISTS trg_handle_inventory_on_delivery_status_change//
+CREATE TRIGGER trg_handle_inventory_on_delivery_status_change
+AFTER UPDATE ON delivery
+FOR EACH ROW
+BEGIN
+    DECLARE v_station_id INT;
+
+    -- 1. If an active delivery is CANCELLED: restore deducted stock back to station inventory
+    IF OLD.delivery_status <> 'CANCELLED' AND NEW.delivery_status = 'CANCELLED' THEN
+        SELECT dr.station_id INTO v_station_id
+        FROM roster_assignment ra
+        JOIN delivery_route dr ON dr.route_id = ra.route_id
+        WHERE ra.roster_id = OLD.roster_id
+        LIMIT 1;
+
+        IF v_station_id IS NULL THEN
+            SELECT dr.station_id INTO v_station_id
+            FROM customer_order co
+            JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
+            WHERE co.order_id = OLD.order_id
+            LIMIT 1;
+        END IF;
+
+        IF v_station_id IS NOT NULL THEN
+            UPDATE inventory inv
+            JOIN (
+                SELECT product_id, SUM(quantity) AS required_qty
+                FROM order_item
+                WHERE order_id = OLD.order_id
+                GROUP BY product_id
+            ) req ON req.product_id = inv.product_id
+            SET inv.stored_quantity = inv.stored_quantity + req.required_qty
+            WHERE inv.station_id = v_station_id;
+        END IF;
+
+    -- 2. If a CANCELLED delivery is reactivated: re-deduct required stock
+    ELSEIF OLD.delivery_status = 'CANCELLED' AND NEW.delivery_status <> 'CANCELLED' THEN
+        SELECT dr.station_id INTO v_station_id
+        FROM roster_assignment ra
+        JOIN delivery_route dr ON dr.route_id = ra.route_id
+        WHERE ra.roster_id = NEW.roster_id
+        LIMIT 1;
+
+        IF v_station_id IS NULL THEN
+            SELECT dr.station_id INTO v_station_id
+            FROM customer_order co
+            JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
+            WHERE co.order_id = NEW.order_id
+            LIMIT 1;
+        END IF;
+
+        IF v_station_id IS NOT NULL THEN
+            UPDATE inventory inv
+            JOIN (
+                SELECT product_id, SUM(quantity) AS required_qty
+                FROM order_item
+                WHERE order_id = NEW.order_id
+                GROUP BY product_id
+            ) req ON req.product_id = inv.product_id
+            SET inv.stored_quantity = inv.stored_quantity - req.required_qty
+            WHERE inv.station_id = v_station_id;
+        END IF;
+    END IF;
+    -- Note: When delivery transitions between active states (e.g., ASSIGNED -> IN_TRANSIT -> DELIVERED),
+    -- stock is already deducted and remains untouched (no double deduction).
+END //
+
 DELIMITER ;
+

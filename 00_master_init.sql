@@ -829,40 +829,47 @@ PROC_BODY: BEGIN
 END //
 
      
+
 -- 4. TRIGGERS
-     
+-- Kandypack Logistics Platform - Triggers (MySQL 8.0)
+
+
+DELIMITER //
+
+-- 1. Prevent UPDATE on audit_log
 DROP TRIGGER IF EXISTS trg_prevent_audit_log_modification//
-CREATE TRIGGER trg_prevent_audit_log_modification BEFORE UPDATE ON audit_log FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'SECURITY VIOLATION: Audit logs immutable'; END //
-
-DROP TRIGGER IF EXISTS trg_prevent_audit_log_deletion//
-CREATE TRIGGER trg_prevent_audit_log_deletion BEFORE DELETE ON audit_log FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'SECURITY VIOLATION: Audit logs immutable'; END //
-
--- Feature 4.4: Stock Handling
--- trg_apply_stock_adjustment: Synchronizes inventory quantities with stock-adjustment records
-DROP TRIGGER IF EXISTS trg_apply_stock_adjustment//
-CREATE TRIGGER trg_apply_stock_adjustment
-AFTER INSERT ON stock_adjustment
+CREATE TRIGGER trg_prevent_audit_log_modification
+BEFORE UPDATE ON audit_log
 FOR EACH ROW
 BEGIN
-    IF NEW.inventory_id IS NOT NULL
-       AND NEW.quantity_delta IS NOT NULL THEN
-
-        UPDATE inventory
-        SET stored_quantity = stored_quantity + NEW.quantity_delta
-        WHERE inventory_id = NEW.inventory_id;
-
-    END IF;
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'SECURITY VIOLATION: Audit logs are immutable and cannot be updated or altered.';
 END //
 
+-- 2. Prevent DELETE on audit_log
+DROP TRIGGER IF EXISTS trg_prevent_audit_log_deletion//
+CREATE TRIGGER trg_prevent_audit_log_deletion
+BEFORE DELETE ON audit_log
+FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000'
+    SET MESSAGE_TEXT = 'SECURITY VIOLATION: Audit logs are immutable and cannot be deleted.';
+END //
+
+-- 3. Feature 4.1: Enforce Account Creation Policy & Force Password Reset (Gunasekara P.S.I)
 DROP TRIGGER IF EXISTS trg_user_account_creation_policy//
 CREATE TRIGGER trg_user_account_creation_policy
 BEFORE INSERT ON user
 FOR EACH ROW
 BEGIN
+    IF COALESCE(@kandypack_staff_provisioning, 0) = 1 AND NEW.role = 'CUSTOMER' THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'SECURITY POLICY VIOLATION: Staff provisioning cannot create customers.';
+    END IF;
     -- Force staff accounts to reset password on first login
     IF NEW.role != 'CUSTOMER' THEN
         SET NEW.force_password_reset = 1;
-
+        
         -- Enforce company domain for internal staff roles
         IF NEW.email NOT LIKE '%@kandypack.lk' THEN
             SIGNAL SQLSTATE '45000'
@@ -882,26 +889,24 @@ BEGIN
     END IF;
 END //
 
-DROP TRIGGER IF EXISTS trg_roster_assignment_request_immutable//
-CREATE TRIGGER trg_roster_assignment_request_immutable
-BEFORE UPDATE ON roster_assignment
+-- 4. Feature 4.4: Stock Handling
+-- trg_apply_stock_adjustment: Synchronizes inventory quantities with stock-adjustment records
+DROP TRIGGER IF EXISTS trg_apply_stock_adjustment//
+CREATE TRIGGER trg_apply_stock_adjustment
+AFTER INSERT ON stock_adjustment
 FOR EACH ROW
 BEGIN
-    IF NOT (OLD.roster_id <=> NEW.roster_id)
-       OR NOT (OLD.request_key <=> NEW.request_key)
-       OR NOT (OLD.route_id <=> NEW.route_id)
-       OR NOT (OLD.truck_id <=> NEW.truck_id)
-       OR NOT (OLD.driver_id <=> NEW.driver_id)
-       OR NOT (OLD.assistant_id <=> NEW.assistant_id)
-       OR NOT (OLD.dispatcher_id <=> NEW.dispatcher_id)
-       OR NOT (OLD.start_time <=> NEW.start_time)
-       OR NOT (OLD.end_time <=> NEW.end_time)
-       OR NOT (OLD.created_at <=> NEW.created_at) THEN
-        SIGNAL SQLSTATE '45000'
-            SET MESSAGE_TEXT = 'Roster assignment request facts are immutable';
+    IF NEW.inventory_id IS NOT NULL
+       AND NEW.quantity_delta IS NOT NULL THEN
+
+        UPDATE inventory
+        SET stored_quantity = stored_quantity + NEW.quantity_delta
+        WHERE inventory_id = NEW.inventory_id;
+
     END IF;
 END //
 
+-- 5. Business Rule: Orders must be placed at least 7 days in advance
 DROP TRIGGER IF EXISTS trg_enforce_7_day_advance_order//
 CREATE TRIGGER trg_enforce_7_day_advance_order
 BEFORE INSERT ON customer_order
@@ -930,16 +935,361 @@ END //
 
 DELIMITER ;
 
-     
--- 5. INDEXES
-     
-CREATE INDEX idx_train_trip_alloc ON train_trip (destination_station_id, status, departure_datetime);
-CREATE INDEX idx_customer_order_status_date ON customer_order (status, order_date);
-CREATE INDEX idx_roster_time_overlap ON roster_assignment (status, start_time, end_time, truck_id, driver_id, assistant_id);
-CREATE INDEX idx_storage_loc_search ON storage_location (station_id, location_code);
+DELIMITER //
+DROP TRIGGER IF EXISTS trg_order_destination_immutable//
+CREATE TRIGGER trg_order_destination_immutable BEFORE UPDATE ON customer_order FOR EACH ROW
+BEGIN
+    IF (NOT (OLD.delivery_route_id <=> NEW.delivery_route_id)
+        OR NOT (OLD.delivery_address <=> NEW.delivery_address)
+        OR NOT (OLD.recipient_name <=> NEW.recipient_name)
+        OR NOT (OLD.recipient_phone <=> NEW.recipient_phone))
+       AND (EXISTS(SELECT 1 FROM rail_allocation ra JOIN order_item oi ON oi.order_item_id=ra.order_item_id WHERE oi.order_id=OLD.order_id)
+            OR EXISTS(SELECT 1 FROM delivery WHERE order_id=OLD.order_id)) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Allocated order destinations are immutable';
+    END IF;
+END //
 
-     
+
+DROP TRIGGER IF EXISTS trg_route_station_immutable//
+CREATE TRIGGER trg_route_station_immutable BEFORE UPDATE ON delivery_route FOR EACH ROW
+BEGIN
+    IF OLD.station_id<>NEW.station_id AND
+       (EXISTS(SELECT 1 FROM customer_order WHERE delivery_route_id=OLD.route_id)
+        OR EXISTS(SELECT 1 FROM roster_assignment WHERE route_id=OLD.route_id)) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Referenced route station is immutable';
+    END IF;
+END //
+
+
+DROP TRIGGER IF EXISTS trg_delivery_assignment_immutable//
+CREATE TRIGGER trg_delivery_assignment_immutable BEFORE UPDATE ON delivery FOR EACH ROW
+BEGIN
+    IF NOT (OLD.delivery_id <=> NEW.delivery_id) OR NOT (OLD.roster_id <=> NEW.roster_id)
+       OR NOT (OLD.order_id <=> NEW.order_id) OR NOT (OLD.assigned_at <=> NEW.assigned_at)
+       OR NOT (OLD.assigned_by <=> NEW.assigned_by) OR NOT (OLD.cargo_weight_kg <=> NEW.cargo_weight_kg) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Cargo assignment facts are immutable';
+    END IF;
+END //
+
+
+DROP TRIGGER IF EXISTS trg_delivery_evidence_delete//
+CREATE TRIGGER trg_delivery_evidence_delete BEFORE DELETE ON delivery FOR EACH ROW
+BEGIN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Cargo assignment evidence cannot be deleted';
+END //
+
+
+-- trg_assigned_item_insert: Prevents adding items after a delivery record exists
+DROP TRIGGER IF EXISTS trg_assigned_item_insert//
+CREATE TRIGGER trg_assigned_item_insert
+BEFORE INSERT ON order_item
+FOR EACH ROW
+BEGIN
+    DECLARE v_order INT;
+
+    SELECT order_id INTO v_order
+    FROM customer_order
+    WHERE order_id = NEW.order_id
+    FOR UPDATE;
+
+    IF EXISTS (
+        SELECT 1
+        FROM delivery
+        WHERE order_id = NEW.order_id
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Assigned order items are immutable';
+    END IF;
+END //
+
+
+-- trg_assigned_item_update: Prevents changing key order-item fields after delivery assignment
+DROP TRIGGER IF EXISTS trg_assigned_item_update//
+CREATE TRIGGER trg_assigned_item_update
+BEFORE UPDATE ON order_item
+FOR EACH ROW
+BEGIN
+    DECLARE v_order INT;
+    SELECT order_id INTO v_order FROM customer_order WHERE order_id = LEAST(OLD.order_id, NEW.order_id) FOR UPDATE;
+    SELECT order_id INTO v_order FROM customer_order WHERE order_id = GREATEST(OLD.order_id, NEW.order_id) FOR UPDATE;
+
+    IF (NOT (OLD.order_id <=> NEW.order_id) OR NOT (OLD.product_id <=> NEW.product_id)
+        OR NOT (OLD.quantity <=> NEW.quantity) OR NOT (OLD.order_item_id <=> NEW.order_item_id))
+       AND EXISTS (
+           SELECT 1
+           FROM delivery
+           WHERE order_id IN (OLD.order_id, NEW.order_id)
+       ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Assigned order items are immutable';
+    END IF;
+END //
+
+
+-- trg_assigned_item_delete: Prevents deleting order items after delivery assignment
+DROP TRIGGER IF EXISTS trg_assigned_item_delete//
+CREATE TRIGGER trg_assigned_item_delete
+BEFORE DELETE ON order_item
+FOR EACH ROW
+BEGIN
+    DECLARE v_order INT;
+
+    SELECT order_id INTO v_order
+    FROM customer_order
+    WHERE order_id = OLD.order_id
+    FOR UPDATE;
+
+    IF EXISTS (
+        SELECT 1
+        FROM delivery
+        WHERE order_id = OLD.order_id
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Assigned order items are immutable';
+    END IF;
+END //
+
+-- 8. Feature 4.4 Stock Handling: Validate sufficient inventory, deduct upon cargo assignment, and restore on cancellation
+DROP TRIGGER IF EXISTS trg_check_inventory_before_delivery//
+CREATE TRIGGER trg_check_inventory_before_delivery
+BEFORE INSERT ON delivery
+FOR EACH ROW
+BEGIN
+    DECLARE v_station_id INT;
+    DECLARE v_shortage_count INT DEFAULT 0;
+
+    -- Only check inventory for active (non-cancelled) deliveries
+    IF NEW.delivery_status <> 'CANCELLED' THEN
+        -- Resolve fulfillment station store from roster route or customer order route
+        SELECT dr.station_id INTO v_station_id
+        FROM roster_assignment ra
+        JOIN delivery_route dr ON dr.route_id = ra.route_id
+        WHERE ra.roster_id = NEW.roster_id
+        LIMIT 1;
+
+        IF v_station_id IS NULL THEN
+            SELECT dr.station_id INTO v_station_id
+            FROM customer_order co
+            JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
+            WHERE co.order_id = NEW.order_id
+            LIMIT 1;
+        END IF;
+
+        IF v_station_id IS NULL THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'INSUFFICIENT_STOCK: Destination station store could not be resolved for delivery order';
+        END IF;
+
+        -- Verify every product in the order has sufficient stock (aggregating multi-line items)
+        SELECT COUNT(*) INTO v_shortage_count
+        FROM (
+            SELECT oi.product_id, SUM(oi.quantity) AS required_qty
+            FROM order_item oi
+            WHERE oi.order_id = NEW.order_id
+            GROUP BY oi.product_id
+        ) req
+        LEFT JOIN inventory inv 
+            ON inv.station_id = v_station_id 
+           AND inv.product_id = req.product_id
+        WHERE inv.stored_quantity IS NULL 
+           OR inv.stored_quantity < req.required_qty;
+
+        IF v_shortage_count > 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'INSUFFICIENT_STOCK: Required inventory shortage or missing stock record at fulfillment station store';
+        END IF;
+    END IF;
+END //
+
+DROP TRIGGER IF EXISTS trg_deduct_inventory_on_delivery//
+CREATE TRIGGER trg_deduct_inventory_on_delivery
+AFTER INSERT ON delivery
+FOR EACH ROW
+BEGIN
+    DECLARE v_station_id INT;
+
+    IF NEW.delivery_status <> 'CANCELLED' THEN
+        SELECT dr.station_id INTO v_station_id
+        FROM roster_assignment ra
+        JOIN delivery_route dr ON dr.route_id = ra.route_id
+        WHERE ra.roster_id = NEW.roster_id
+        LIMIT 1;
+
+        IF v_station_id IS NULL THEN
+            SELECT dr.station_id INTO v_station_id
+            FROM customer_order co
+            JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
+            WHERE co.order_id = NEW.order_id
+            LIMIT 1;
+        END IF;
+
+        IF v_station_id IS NOT NULL THEN
+            UPDATE inventory inv
+            JOIN (
+                SELECT product_id, SUM(quantity) AS required_qty
+                FROM order_item
+                WHERE order_id = NEW.order_id
+                GROUP BY product_id
+            ) req ON req.product_id = inv.product_id
+            SET inv.stored_quantity = inv.stored_quantity - req.required_qty
+            WHERE inv.station_id = v_station_id;
+        END IF;
+    END IF;
+END //
+
+DROP TRIGGER IF EXISTS trg_check_inventory_before_delivery_update//
+CREATE TRIGGER trg_check_inventory_before_delivery_update
+BEFORE UPDATE ON delivery
+FOR EACH ROW
+BEGIN
+    DECLARE v_station_id INT;
+    DECLARE v_shortage_count INT DEFAULT 0;
+
+    -- If un-cancelling a delivery, ensure sufficient inventory exists
+    IF OLD.delivery_status = 'CANCELLED' AND NEW.delivery_status <> 'CANCELLED' THEN
+        SELECT dr.station_id INTO v_station_id
+        FROM roster_assignment ra
+        JOIN delivery_route dr ON dr.route_id = ra.route_id
+        WHERE ra.roster_id = NEW.roster_id
+        LIMIT 1;
+
+        IF v_station_id IS NULL THEN
+            SELECT dr.station_id INTO v_station_id
+            FROM customer_order co
+            JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
+            WHERE co.order_id = NEW.order_id
+            LIMIT 1;
+        END IF;
+
+        IF v_station_id IS NULL THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'INSUFFICIENT_STOCK: Destination station store could not be resolved for delivery order';
+        END IF;
+
+        SELECT COUNT(*) INTO v_shortage_count
+        FROM (
+            SELECT oi.product_id, SUM(oi.quantity) AS required_qty
+            FROM order_item oi
+            WHERE oi.order_id = NEW.order_id
+            GROUP BY oi.product_id
+        ) req
+        LEFT JOIN inventory inv 
+            ON inv.station_id = v_station_id 
+           AND inv.product_id = req.product_id
+        WHERE inv.stored_quantity IS NULL 
+           OR inv.stored_quantity < req.required_qty;
+
+        IF v_shortage_count > 0 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'INSUFFICIENT_STOCK: Required inventory shortage or missing stock record at fulfillment station store';
+        END IF;
+    END IF;
+END //
+
+DROP TRIGGER IF EXISTS trg_handle_inventory_on_delivery_status_change//
+CREATE TRIGGER trg_handle_inventory_on_delivery_status_change
+AFTER UPDATE ON delivery
+FOR EACH ROW
+BEGIN
+    DECLARE v_station_id INT;
+
+    -- 1. If an active delivery is CANCELLED: restore deducted stock back to station inventory
+    IF OLD.delivery_status <> 'CANCELLED' AND NEW.delivery_status = 'CANCELLED' THEN
+        SELECT dr.station_id INTO v_station_id
+        FROM roster_assignment ra
+        JOIN delivery_route dr ON dr.route_id = ra.route_id
+        WHERE ra.roster_id = OLD.roster_id
+        LIMIT 1;
+
+        IF v_station_id IS NULL THEN
+            SELECT dr.station_id INTO v_station_id
+            FROM customer_order co
+            JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
+            WHERE co.order_id = OLD.order_id
+            LIMIT 1;
+        END IF;
+
+        IF v_station_id IS NOT NULL THEN
+            UPDATE inventory inv
+            JOIN (
+                SELECT product_id, SUM(quantity) AS required_qty
+                FROM order_item
+                WHERE order_id = OLD.order_id
+                GROUP BY product_id
+            ) req ON req.product_id = inv.product_id
+            SET inv.stored_quantity = inv.stored_quantity + req.required_qty
+            WHERE inv.station_id = v_station_id;
+        END IF;
+
+    -- 2. If a CANCELLED delivery is reactivated: re-deduct required stock
+    ELSEIF OLD.delivery_status = 'CANCELLED' AND NEW.delivery_status <> 'CANCELLED' THEN
+        SELECT dr.station_id INTO v_station_id
+        FROM roster_assignment ra
+        JOIN delivery_route dr ON dr.route_id = ra.route_id
+        WHERE ra.roster_id = NEW.roster_id
+        LIMIT 1;
+
+        IF v_station_id IS NULL THEN
+            SELECT dr.station_id INTO v_station_id
+            FROM customer_order co
+            JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
+            WHERE co.order_id = NEW.order_id
+            LIMIT 1;
+        END IF;
+
+        IF v_station_id IS NOT NULL THEN
+            UPDATE inventory inv
+            JOIN (
+                SELECT product_id, SUM(quantity) AS required_qty
+                FROM order_item
+                WHERE order_id = NEW.order_id
+                GROUP BY product_id
+            ) req ON req.product_id = inv.product_id
+            SET inv.stored_quantity = inv.stored_quantity - req.required_qty
+            WHERE inv.station_id = v_station_id;
+        END IF;
+    END IF;
+    -- Note: When delivery transitions between active states (e.g., ASSIGNED -> IN_TRANSIT -> DELIVERED),
+    -- stock is already deducted and remains untouched (no double deduction).
+END //
+
+DELIMITER ;
+
+-- 5. INDEXES
+-- Kandypack Logistics Platform - Performance B-Tree Indexes (MySQL 8.0)
+
+
+-- 1. Optimizing lookup for available train trips (PERF-02, PERF-11)
+CREATE INDEX idx_train_trip_alloc 
+ON train_trip (destination_station_id, status, departure_datetime);
+
+-- 2. Optimizing lookup for pending rail scheduling orders (PERF-01)
+CREATE INDEX idx_customer_order_status_date 
+ON customer_order (status, order_date);
+
+-- 3. Optimizing overlap checking in truck rosters (FR-4.3.4)
+CREATE INDEX idx_roster_time_overlap 
+ON roster_assignment (status, start_time, end_time, truck_id, driver_id, assistant_id);
+
+-- 4. Optimizing storage location search
+CREATE INDEX idx_storage_loc_search 
+ON storage_location (station_id, location_code);
+
+-- 5. Feature 4.4: find manifests waiting at a station (Store Manager dashboard)
+CREATE INDEX idx_manifest_station_status
+ON manifest (station_id, status);
+
+-- 6. Feature 4.4: history of one stock row, newest first
+CREATE INDEX idx_stock_adjust_inv_date
+ON stock_adjustment (inventory_id, adjusted_at);
+CREATE INDEX idx_order_destination_date ON customer_order (delivery_route_id, delivery_date, status);
+CREATE INDEX idx_delivery_run_status ON delivery (roster_id, delivery_status, delivery_id);
+
 -- 6. SEED DATA
+-- Kandypack Logistics Platform - Comprehensive Seed Data (MySQL 8.0)
+-- Compliant with Project 3 Specification: >= 40 Orders, >= 10 Routes, Multi-trip Rail, Full Delivery Life-cycle
+
+
 SET FOREIGN_KEY_CHECKS = 0;
 TRUNCATE TABLE notification;
 TRUNCATE TABLE audit_log;
@@ -1010,20 +1360,20 @@ INSERT INTO product (product_id, product_name, category, unit_price, unit_weight
 (7, 'Traditional Brassware & Metal Crafts Crate (35kg)', 'Hardware & Industrial', 7500.00, 35.00, 0.0700, 'Handcrafted polished brass oil lamps, brassware, and cultural souvenirs cushioned in protective wooden crates.', '/products/brassware_crate.jpg'),
 (8, 'Precision Industrial Machinery Spares (40kg)', 'Hardware & Industrial', 8900.00, 40.00, 0.0850, 'High-grade steel gears, shafts, and mechanical components packed in shock-absorbing foam-lined transport cases.', '/products/machinery_parts.jpg');
 
--- 3. STATION_STORE (All main destination hubs and Kandy central goods shed)
-INSERT INTO station_store (station_id, city, address, manager_id) VALUES
-(1, 'Colombo', 'Colombo Main Railway Station Store, Colombo 10', 4),
-(2, 'Negombo', 'Negombo Station Hub, Negombo', 13),
-(3, 'Galle', 'Galle Station Hub, Galle', 14),
-(4, 'Matara', 'Matara Station Hub, Matara', 15),
-(5, 'Jaffna', 'Jaffna Station Hub, Jaffna', 16),
-(6, 'Trincomalee', 'Trincomalee Station Hub, Trincomalee', 17),
-(7, 'Kandy', 'Kandy Central Goods Yard, Kandy', 18);
+-- 3. STATION_STORE (All 6 Destination Station Hubs + Central Warehouse in Kandy)
+INSERT INTO station_store (station_id, city, address, is_active) VALUES
+(1, 'Colombo', 'Fort Railway Station Freight Terminal, Colombo 01', 1),
+(2, 'Negombo', 'Negombo Main Railway Station Goods Shed, Negombo', 1),
+(3, 'Galle', 'Galle Railway Station Yard, Old Station Road, Galle', 1),
+(4, 'Matara', 'Matara Terminus Freight Hub, Station Road, Matara', 1),
+(5, 'Jaffna', 'Jaffna Station Yard, Station Road, Jaffna', 1),
+(6, 'Trincomalee', 'Trincomalee Harbour Railway Depot, Dockyard Road, Trincomalee', 1),
+(7, 'Kandy', 'Central Freight Consolidation Hub, Peradeniya Goods Yard, Kandy', 1);
 
--- 4. STORAGE_LOCATION (Depot storage bins for verified unloading)
+-- 4. STORAGE_LOCATION (Specific Bins & Staging Racks per Station)
 INSERT INTO storage_location (location_id, station_id, location_code, location_type) VALUES
 (1, 1, 'BIN-A1', 'General Goods'),
-(2, 1, 'BIN-A2', 'General Goods'),
+(2, 1, 'BIN-A2', 'Secure Vault'),
 (3, 3, 'BIN-G1', 'General Goods'),
 (4, 1, 'BIN-A3', 'Cold Storage'),
 (5, 2, 'BIN-N1', 'General Goods'),
@@ -1038,29 +1388,47 @@ INSERT INTO storage_location (location_id, station_id, location_code, location_t
 (14, 7, 'BIN-K1', 'General Goods'),
 (15, 7, 'BIN-K2', 'General Goods');
 
--- 5. TRAIN_TRIP (Valid Sri Lanka Railways Schedule from Kandy to All Main Cities)
+-- 5. TRAIN_TRIP (Valid Sri Lanka Railways Schedule connecting Kandy to all Main Cities)
 INSERT INTO train_trip (trip_id, origin_station_id, destination_station_id, departure_datetime, arrival_datetime, total_capacity, status) VALUES
 (1, 7, 1, '2026-02-10 06:00:00', '2026-02-10 09:30:00', 30.00, 'COMPLETED'),
 (2, 7, 1, '2026-02-10 14:00:00', '2026-02-10 17:30:00', 40.00, 'COMPLETED'),
 (3, 7, 3, '2026-02-11 07:00:00', '2026-02-11 11:30:00', 50.00, 'COMPLETED'),
+(24, 7, 1, '2026-02-23 06:00:00', '2026-02-23 09:30:00', 40.00, 'COMPLETED'),
+(25, 7, 1, '2026-02-24 06:00:00', '2026-02-24 09:30:00', 40.00, 'COMPLETED'),
+(26, 7, 3, '2026-03-10 07:00:00', '2026-03-10 11:30:00', 40.00, 'COMPLETED'),
+(27, 7, 1, '2026-03-14 06:00:00', '2026-03-14 09:30:00', 40.00, 'COMPLETED'),
+(28, 7, 3, '2026-03-18 07:00:00', '2026-03-18 11:30:00', 40.00, 'COMPLETED'),
+(29, 7, 1, '2026-03-23 06:00:00', '2026-03-23 09:30:00', 40.00, 'COMPLETED'),
+(30, 7, 1, '2026-03-28 06:00:00', '2026-03-28 09:30:00', 40.00, 'COMPLETED'),
 (4, 7, 2, '2026-05-15 06:30:00', '2026-05-15 10:00:00', 35.00, 'COMPLETED'),
 (5, 7, 4, '2026-05-16 07:00:00', '2026-05-16 12:00:00', 40.00, 'COMPLETED'),
 (6, 7, 5, '2026-05-17 05:00:00', '2026-05-17 12:30:00', 50.00, 'COMPLETED'),
 (7, 7, 6, '2026-05-18 06:00:00', '2026-05-18 12:00:00', 35.00, 'COMPLETED'),
-(8, 7, 1, '2026-08-10 06:00:00', '2026-08-10 09:30:00', 30.00, 'COMPLETED'),
-(9, 7, 1, '2026-08-10 14:00:00', '2026-08-10 17:30:00', 40.00, 'COMPLETED'),
+(22, 7, 1, '2026-05-19 06:00:00', '2026-05-19 09:30:00', 40.00, 'COMPLETED'),
+(23, 7, 3, '2026-05-20 07:00:00', '2026-05-20 11:30:00', 45.00, 'COMPLETED'),
+(31, 7, 2, '2026-06-09 06:30:00', '2026-06-09 10:00:00', 35.00, 'COMPLETED'),
+(32, 7, 4, '2026-06-14 07:00:00', '2026-06-14 12:00:00', 40.00, 'COMPLETED'),
+(33, 7, 5, '2026-06-19 05:00:00', '2026-06-19 12:30:00', 50.00, 'COMPLETED'),
+(34, 7, 6, '2026-06-24 06:00:00', '2026-06-24 12:00:00', 35.00, 'COMPLETED'),
+(8, 7, 1, '2026-08-09 06:00:00', '2026-08-09 09:30:00', 30.00, 'COMPLETED'),
+(9, 7, 1, '2026-08-09 14:00:00', '2026-08-09 17:30:00', 40.00, 'COMPLETED'),
 (10, 7, 3, '2026-08-11 07:00:00', '2026-08-11 11:30:00', 50.00, 'COMPLETED'),
 (11, 7, 2, '2026-08-12 06:30:00', '2026-08-12 10:00:00', 35.00, 'COMPLETED'),
 (12, 7, 4, '2026-08-13 07:00:00', '2026-08-13 12:00:00', 40.00, 'COMPLETED'),
 (13, 7, 5, '2026-08-14 05:00:00', '2026-08-14 12:30:00', 50.00, 'COMPLETED'),
 (14, 7, 6, '2026-08-15 06:00:00', '2026-08-15 12:00:00', 35.00, 'COMPLETED'),
-(15, 7, 1, '2026-10-18 06:00:00', '2026-10-18 09:30:00', 30.00, 'SCHEDULED'),
-(16, 7, 1, '2026-10-18 14:00:00', '2026-10-18 17:30:00', 40.00, 'SCHEDULED'),
-(17, 7, 3, '2026-10-19 07:00:00', '2026-10-19 11:30:00', 50.00, 'SCHEDULED'),
-(18, 7, 2, '2026-10-20 06:30:00', '2026-10-20 10:00:00', 35.00, 'SCHEDULED'),
-(19, 7, 4, '2026-10-21 07:00:00', '2026-10-21 12:00:00', 40.00, 'SCHEDULED'),
-(20, 7, 5, '2026-10-22 05:00:00', '2026-10-22 12:30:00', 50.00, 'SCHEDULED'),
-(21, 7, 6, '2026-10-23 06:00:00', '2026-10-23 12:00:00', 35.00, 'SCHEDULED');
+(35, 7, 1, '2026-08-18 06:00:00', '2026-08-18 09:30:00', 40.00, 'COMPLETED'),
+(36, 7, 3, '2026-08-20 07:00:00', '2026-08-20 11:30:00', 40.00, 'COMPLETED'),
+(37, 7, 2, '2026-08-23 06:30:00', '2026-08-23 10:00:00', 35.00, 'COMPLETED'),
+(38, 7, 1, '2026-09-10 06:00:00', '2026-09-10 09:30:00', 40.00, 'COMPLETED'),
+(39, 7, 1, '2026-09-14 06:00:00', '2026-09-14 09:30:00', 40.00, 'COMPLETED'),
+(17, 7, 3, '2026-10-17 07:00:00', '2026-10-17 11:30:00', 50.00, 'SCHEDULED'),
+(18, 7, 2, '2026-10-17 06:30:00', '2026-10-17 10:00:00', 35.00, 'SCHEDULED'),
+(19, 7, 4, '2026-10-18 07:00:00', '2026-10-18 12:00:00', 40.00, 'SCHEDULED'),
+(20, 7, 5, '2026-10-19 05:00:00', '2026-10-19 12:30:00', 50.00, 'SCHEDULED'),
+(21, 7, 6, '2026-10-20 06:00:00', '2026-10-20 12:00:00', 35.00, 'SCHEDULED'),
+(15, 7, 1, '2026-10-20 06:00:00', '2026-10-20 09:30:00', 30.00, 'SCHEDULED'),
+(16, 7, 1, '2026-10-21 14:00:00', '2026-10-21 17:30:00', 40.00, 'SCHEDULED');
 
 -- 6. DELIVERY_ROUTE (11 predefined routes with maximum delivery times)
 INSERT INTO delivery_route (route_id, station_id, route_name, max_delivery_time) VALUES
@@ -1199,9 +1567,9 @@ INSERT INTO order_item (order_item_id, order_id, product_id, quantity, unit_pric
 (37, 1022, 3, 54, 2600.00),
 (38, 1022, 7, 52, 7500.00),
 (39, 1023, 6, 61, 4800.00),
-(40, 1024, 1, 68, 4500.00),
-(41, 1024, 2, 24, 3800.00),
-(42, 1024, 3, 47, 2600.00),
+(40, 1024, 8, 200, 8900.00),
+(41, 1024, 5, 150, 5200.00),
+(42, 1024, 1, 47, 4500.00),
 (43, 1025, 4, 75, 4200.00),
 (44, 1026, 7, 82, 7500.00),
 (45, 1026, 3, 46, 2600.00),
@@ -1249,8 +1617,8 @@ INSERT INTO manifest (manifest_id, station_id, trip_id, received_at, status) VAL
 (5, 4, 5, '2026-05-16 12:15:00', 'RECEIVED'),
 (6, 5, 6, '2026-05-17 12:45:00', 'RECEIVED'),
 (7, 6, 7, '2026-05-18 12:15:00', 'RECEIVED'),
-(8, 1, 8, '2026-08-10 09:45:00', 'RECEIVED'),
-(9, 1, 9, '2026-08-10 17:45:00', 'RECEIVED'),
+(8, 1, 8, '2026-08-09 09:45:00', 'RECEIVED'),
+(9, 1, 9, '2026-08-09 17:45:00', 'RECEIVED'),
 (10, 3, 10, '2026-08-11 11:45:00', 'RECEIVED'),
 (11, 2, 11, '2026-08-12 10:15:00', 'RECEIVED'),
 (12, 4, 12, '2026-08-13 12:15:00', 'RECEIVED'),
@@ -1262,29 +1630,47 @@ INSERT INTO manifest (manifest_id, station_id, trip_id, received_at, status) VAL
 (18, 2, 18, NULL, 'PENDING'),
 (19, 4, 19, NULL, 'PENDING'),
 (20, 5, 20, NULL, 'PENDING'),
-(21, 6, 21, NULL, 'PENDING')
+(21, 6, 21, NULL, 'PENDING'),
+(22, 1, 22, '2026-05-19 09:45:00', 'RECEIVED'),
+(23, 3, 23, '2026-05-20 11:45:00', 'RECEIVED'),
+(24, 1, 24, '2026-02-23 09:45:00', 'RECEIVED'),
+(25, 1, 25, '2026-02-24 09:45:00', 'RECEIVED'),
+(26, 3, 26, '2026-03-10 11:45:00', 'RECEIVED'),
+(27, 1, 27, '2026-03-14 09:45:00', 'RECEIVED'),
+(28, 3, 28, '2026-03-18 11:45:00', 'RECEIVED'),
+(29, 1, 29, '2026-03-23 09:45:00', 'RECEIVED'),
+(30, 1, 30, '2026-03-28 09:45:00', 'RECEIVED'),
+(31, 2, 31, '2026-06-09 10:15:00', 'RECEIVED'),
+(32, 4, 32, '2026-06-14 12:15:00', 'RECEIVED'),
+(33, 5, 33, '2026-06-19 12:45:00', 'RECEIVED'),
+(34, 6, 34, '2026-06-24 12:15:00', 'RECEIVED'),
+(35, 1, 35, '2026-08-18 09:45:00', 'RECEIVED'),
+(36, 3, 36, '2026-08-20 11:45:00', 'RECEIVED'),
+(37, 2, 37, '2026-08-23 10:15:00', 'RECEIVED'),
+(38, 1, 38, '2026-09-10 09:45:00', 'RECEIVED'),
+(39, 1, 39, '2026-09-14 09:45:00', 'RECEIVED')
 ON DUPLICATE KEY UPDATE status=VALUES(status), received_at=VALUES(received_at);
 
--- 13. RAIL_ALLOCATION (Space allocation per train trip, single and multi-trip spillover)
+-- 13. RAIL_ALLOCATION (Space allocation per train trip, single and capacity-driven multi-trip spillover)
 INSERT INTO rail_allocation (allocation_id, order_item_id, trip_id, allocated_quantity, allocated_space, allocated_by, allocated_at) VALUES
 (1, 1, 1, 67, 3.0150, 2, '2026-08-02 09:00:00'),
 (2, 2, 2, 74, 5.1800, 2, '2026-08-02 09:00:00'),
 (3, 3, 2, 32, 2.5600, 2, '2026-08-02 09:00:00'),
-(4, 4, 1, 81, 3.2400, 2, '2026-08-02 09:00:00'),
-(5, 5, 3, 88, 5.2800, 2, '2026-08-02 09:00:00'),
-(6, 6, 3, 54, 2.9700, 2, '2026-08-02 09:00:00'),
-(7, 7, 3, 27, 1.8900, 2, '2026-08-02 09:00:00'),
-(8, 8, 1, 95, 8.0750, 2, '2026-08-02 09:00:00'),
-(9, 9, 3, 22, 1.7600, 2, '2026-08-02 09:00:00'),
-(10, 10, 3, 26, 1.8200, 2, '2026-08-02 09:00:00'),
-(11, 11, 1, 29, 1.5950, 2, '2026-08-02 09:00:00'),
-(12, 12, 2, 36, 1.8000, 2, '2026-08-02 09:00:00'),
-(13, 13, 2, 48, 1.9200, 2, '2026-08-02 09:00:00'),
-(14, 14, 2, 39, 3.1200, 2, '2026-08-02 09:00:00'),
-(15, 15, 1, 43, 1.9350, 2, '2026-08-02 09:00:00'),
-(16, 16, 3, 50, 3.5000, 2, '2026-08-02 09:00:00'),
-(17, 17, 3, 20, 1.6000, 2, '2026-08-02 09:00:00'),
-(18, 18, 7, 57, 2.2800, 2, '2026-08-02 09:00:00'),
+(4, 4, 3, 81, 3.2400, 2, '2026-08-02 09:00:00'),
+(5, 5, 24, 88, 5.2800, 2, '2026-08-02 09:00:00'),
+(6, 6, 24, 54, 2.9700, 2, '2026-08-02 09:00:00'),
+(7, 7, 24, 27, 1.8900, 2, '2026-08-02 09:00:00'),
+(8, 8, 25, 95, 8.0750, 2, '2026-08-02 09:00:00'),
+(9, 9, 26, 22, 1.7600, 2, '2026-08-02 09:00:00'),
+(10, 10, 26, 26, 1.8200, 2, '2026-08-02 09:00:00'),
+(11, 11, 27, 29, 1.5950, 2, '2026-08-02 09:00:00'),
+(12, 12, 28, 36, 1.8000, 2, '2026-08-02 09:00:00'),
+(13, 13, 28, 48, 1.9200, 2, '2026-08-02 09:00:00'),
+(14, 14, 28, 39, 3.1200, 2, '2026-08-02 09:00:00'),
+(15, 15, 29, 43, 1.9350, 2, '2026-08-02 09:00:00'),
+(16, 16, 30, 50, 3.5000, 2, '2026-08-02 09:00:00'),
+(17, 17, 30, 20, 1.6000, 2, '2026-08-02 09:00:00'),
+(18, 18, 4, 57, 2.2800, 2, '2026-08-02 09:00:00'),
 (19, 19, 4, 64, 3.8400, 2, '2026-08-02 09:00:00'),
 (20, 20, 4, 42, 2.3100, 2, '2026-08-02 09:00:00'),
 (21, 21, 4, 51, 3.5700, 2, '2026-08-02 09:00:00'),
@@ -1292,76 +1678,121 @@ INSERT INTO rail_allocation (allocation_id, order_item_id, trip_id, allocated_qu
 (23, 23, 6, 78, 6.2400, 2, '2026-08-02 09:00:00'),
 (24, 24, 6, 14, 0.9800, 2, '2026-08-02 09:00:00'),
 (25, 25, 7, 85, 4.6750, 2, '2026-08-02 09:00:00'),
-(26, 26, 4, 92, 4.6000, 2, '2026-08-02 09:00:00'),
-(27, 27, 4, 36, 1.4400, 2, '2026-08-02 09:00:00'),
-(28, 28, 4, 23, 1.8400, 2, '2026-08-02 09:00:00'),
-(29, 29, 5, 99, 4.4550, 2, '2026-08-02 09:00:00'),
-(30, 30, 6, 26, 1.8200, 2, '2026-08-02 09:00:00'),
-(31, 31, 6, 58, 4.6400, 2, '2026-08-02 09:00:00'),
-(32, 32, 7, 33, 1.3200, 2, '2026-08-02 09:00:00'),
-(33, 33, 4, 40, 2.4000, 2, '2026-08-02 09:00:00'),
-(34, 34, 4, 30, 1.6500, 2, '2026-08-02 09:00:00'),
-(35, 35, 4, 35, 2.4500, 2, '2026-08-02 09:00:00'),
-(36, 36, 5, 47, 3.9950, 2, '2026-08-02 09:00:00'),
-(37, 37, 6, 54, 4.3200, 2, '2026-08-02 09:00:00'),
-(38, 38, 6, 52, 3.6400, 2, '2026-08-02 09:00:00'),
-(39, 39, 9, 61, 3.3550, 2, '2026-08-02 09:00:00'),
-(40, 40, 10, 68, 3.4000, 2, '2026-08-02 09:00:00'),
-(41, 41, 10, 24, 0.9600, 2, '2026-08-02 09:00:00'),
-(42, 42, 10, 47, 3.7600, 2, '2026-08-02 09:00:00'),
-(43, 43, 11, 75, 3.3750, 2, '2026-08-02 09:00:00'),
-(44, 44, 12, 82, 5.7400, 2, '2026-08-02 09:00:00'),
-(45, 45, 12, 46, 3.6800, 2, '2026-08-02 09:00:00'),
-(46, 46, 13, 89, 3.5600, 2, '2026-08-02 09:00:00'),
-(47, 47, 14, 96, 5.7600, 2, '2026-08-02 09:00:00'),
-(48, 48, 14, 18, 0.9900, 2, '2026-08-02 09:00:00'),
-(49, 49, 14, 19, 1.3300, 2, '2026-08-02 09:00:00'),
-(50, 50, 8, 23, 1.9550, 2, '2026-08-02 09:00:00'),
-(51, 51, 9, 30, 2.4000, 2, '2026-08-02 09:00:00'),
-(52, 52, 9, 40, 2.8000, 2, '2026-08-02 09:00:00'),
-(53, 53, 10, 37, 2.0350, 2, '2026-08-02 09:00:00'),
-(54, 54, 10, 51, 2.2950, 2, '2026-08-02 09:00:00'),
-(55, 55, 11, 44, 2.2000, 2, '2026-08-02 09:00:00'),
-(56, 56, 11, 12, 0.4800, 2, '2026-08-02 09:00:00'),
-(57, 57, 11, 31, 2.4800, 2, '2026-08-02 09:00:00'),
-(58, 58, 12, 51, 2.2950, 2, '2026-08-02 09:00:00'),
-(59, 59, 12, 23, 1.2650, 2, '2026-08-02 09:00:00'),
-(60, 60, 13, 58, 4.0600, 2, '2026-08-02 09:00:00'),
-(61, 61, 13, 34, 2.7200, 2, '2026-08-02 09:00:00'),
-(62, 62, 18, 65, 2.6000, 2, '2026-08-02 09:00:00'),
-(63, 63, 18, 45, 3.8250, 2, '2026-08-02 09:00:00'),
-(64, 64, 19, 72, 4.3200, 2, '2026-08-02 09:00:00'),
-(65, 65, 19, 56, 3.0800, 2, '2026-08-02 09:00:00'),
-(66, 66, 19, 43, 3.0100, 2, '2026-08-02 09:00:00'),
-(67, 67, 20, 79, 6.7150, 2, '2026-08-02 09:00:00'),
-(68, 68, 20, 17, 0.6800, 2, '2026-08-02 09:00:00'),
-(69, 69, 15, 86, 6.8800, 2, '2026-08-02 09:00:00'),
-(70, 70, 15, 28, 1.9600, 2, '2026-08-02 09:00:00'),
-(71, 71, 16, 93, 5.1150, 2, '2026-08-02 09:00:00'),
-(72, 72, 16, 39, 1.7550, 2, '2026-08-02 09:00:00'),
-(73, 73, 17, 20, 1.0000, 2, '2026-08-02 09:00:00'),
-(74, 74, 17, 50, 2.0000, 2, '2026-08-02 09:00:00'),
-(75, 75, 17, 15, 1.2000, 2, '2026-08-02 09:00:00');
+(26, 26, 22, 92, 4.6000, 2, '2026-08-02 09:00:00'),
+(27, 27, 22, 36, 1.4400, 2, '2026-08-02 09:00:00'),
+(28, 28, 22, 23, 1.8400, 2, '2026-08-02 09:00:00'),
+(29, 29, 22, 99, 4.4550, 2, '2026-08-02 09:00:00'),
+(30, 30, 23, 26, 1.8200, 2, '2026-08-02 09:00:00'),
+(31, 31, 23, 58, 4.6400, 2, '2026-08-02 09:00:00'),
+(32, 32, 31, 33, 1.3200, 2, '2026-08-02 09:00:00'),
+(33, 33, 32, 40, 2.4000, 2, '2026-08-02 09:00:00'),
+(34, 34, 32, 30, 1.6500, 2, '2026-08-02 09:00:00'),
+(35, 35, 32, 35, 2.4500, 2, '2026-08-02 09:00:00'),
+(36, 36, 33, 47, 3.9950, 2, '2026-08-02 09:00:00'),
+(37, 37, 34, 54, 4.3200, 2, '2026-08-02 09:00:00'),
+(38, 38, 34, 52, 3.6400, 2, '2026-08-02 09:00:00'),
+(39, 39, 8, 30, 1.6500, 2, '2026-08-02 08:30:00'),
+(40, 39, 9, 31, 1.7050, 2, '2026-08-02 08:35:00'),
+(41, 40, 8, 200, 17.0000, 2, '2026-08-02 09:00:00'),
+(42, 41, 8, 150, 9.0000, 2, '2026-08-02 09:00:00'),
+(43, 42, 8, 47, 2.3500, 2, '2026-08-02 09:00:00'),
+(44, 43, 10, 75, 3.3750, 2, '2026-08-02 09:00:00'),
+(45, 44, 11, 82, 5.7400, 2, '2026-08-02 09:00:00'),
+(46, 45, 11, 46, 3.6800, 2, '2026-08-02 09:00:00'),
+(47, 46, 12, 89, 3.5600, 2, '2026-08-02 09:00:00'),
+(48, 47, 13, 96, 5.7600, 2, '2026-08-02 09:00:00'),
+(49, 48, 13, 18, 0.9900, 2, '2026-08-02 09:00:00'),
+(50, 49, 13, 19, 1.3300, 2, '2026-08-02 09:00:00'),
+(51, 50, 14, 23, 1.9550, 2, '2026-08-02 09:00:00'),
+(52, 51, 35, 30, 2.4000, 2, '2026-08-02 09:00:00'),
+(53, 52, 35, 40, 2.8000, 2, '2026-08-02 09:00:00'),
+(54, 53, 36, 37, 2.0350, 2, '2026-08-02 09:00:00'),
+(55, 54, 36, 51, 2.2950, 2, '2026-08-02 09:00:00'),
+(56, 55, 37, 44, 2.2000, 2, '2026-08-02 09:00:00'),
+(57, 56, 37, 12, 0.4800, 2, '2026-08-02 09:00:00'),
+(58, 57, 37, 31, 2.4800, 2, '2026-08-02 09:00:00'),
+(59, 58, 38, 51, 2.2950, 2, '2026-08-02 09:00:00'),
+(60, 59, 38, 23, 1.2650, 2, '2026-08-02 09:00:00'),
+(61, 60, 39, 58, 4.0600, 2, '2026-08-02 09:00:00'),
+(62, 61, 39, 34, 2.7200, 2, '2026-08-02 09:00:00'),
+(63, 62, 17, 65, 2.6000, 2, '2026-08-02 09:00:00'),
+(64, 63, 17, 45, 3.8250, 2, '2026-08-02 09:00:00'),
+(65, 64, 18, 72, 4.3200, 2, '2026-08-02 09:00:00'),
+(66, 65, 18, 56, 3.0800, 2, '2026-08-02 09:00:00'),
+(67, 66, 18, 43, 3.0100, 2, '2026-08-02 09:00:00'),
+(68, 67, 19, 79, 6.7150, 2, '2026-08-02 09:00:00'),
+(69, 68, 19, 17, 0.6800, 2, '2026-08-02 09:00:00'),
+(70, 69, 20, 86, 6.8800, 2, '2026-08-02 09:00:00'),
+(71, 70, 20, 28, 1.9600, 2, '2026-08-02 09:00:00'),
+(72, 71, 21, 93, 5.1150, 2, '2026-08-02 09:00:00'),
+(73, 72, 21, 39, 1.7550, 2, '2026-08-02 09:00:00'),
+(74, 73, 15, 20, 1.0000, 2, '2026-08-02 09:00:00'),
+(75, 74, 15, 50, 2.0000, 2, '2026-08-02 09:00:00'),
+(76, 75, 15, 15, 1.2000, 2, '2026-08-02 09:00:00');
 
--- 14. INVENTORY & STOCK ADJUSTMENT (Station Stock Holdings & Audit Adjustments)
+-- 14. INVENTORY & STOCK ADJUSTMENT (Complete Station Stock Holdings & Audit Adjustments)
 INSERT INTO inventory (inventory_id, station_id, product_id, location_id, stored_quantity) VALUES
-(1, 1, 1, 1, 450),
-(2, 1, 2, 2, 320),
-(3, 1, 3, 4, 180),
-(4, 1, 4, 1, 95),
-(5, 3, 1, 3, 210),
-(6, 3, 3, 7, 110),
-(7, 2, 1, 5, 140),
-(8, 2, 2, 6, 85),
-(9, 4, 3, 8, 70),
-(10, 5, 1, 10, 160),
-(11, 6, 2, 12, 90),
-(12, 7, 4, 14, 65);
+(1, 1, 1, 1, 1000),
+(2, 1, 2, 2, 1000),
+(3, 1, 3, 4, 1000),
+(4, 1, 4, 1, 1000),
+(5, 1, 5, 2, 1000),
+(6, 1, 6, 4, 1000),
+(7, 1, 7, 1, 1000),
+(8, 1, 8, 2, 1000),
+(9, 2, 1, 5, 800),
+(10, 2, 2, 6, 800),
+(11, 2, 3, 5, 800),
+(12, 2, 4, 6, 800),
+(13, 2, 5, 5, 800),
+(14, 2, 6, 6, 800),
+(15, 2, 7, 5, 800),
+(16, 2, 8, 6, 800),
+(17, 3, 1, 3, 800),
+(18, 3, 2, 7, 800),
+(19, 3, 3, 3, 800),
+(20, 3, 4, 7, 800),
+(21, 3, 5, 3, 800),
+(22, 3, 6, 7, 800),
+(23, 3, 7, 3, 800),
+(24, 3, 8, 7, 800),
+(25, 4, 1, 8, 800),
+(26, 4, 2, 9, 800),
+(27, 4, 3, 8, 800),
+(28, 4, 4, 9, 800),
+(29, 4, 5, 8, 800),
+(30, 4, 6, 9, 800),
+(31, 4, 7, 8, 800),
+(32, 4, 8, 9, 800),
+(33, 5, 1, 10, 800),
+(34, 5, 2, 11, 800),
+(35, 5, 3, 10, 800),
+(36, 5, 4, 11, 800),
+(37, 5, 5, 10, 800),
+(38, 5, 6, 11, 800),
+(39, 5, 7, 10, 800),
+(40, 5, 8, 11, 800),
+(41, 6, 1, 12, 800),
+(42, 6, 2, 13, 800),
+(43, 6, 3, 12, 800),
+(44, 6, 4, 13, 800),
+(45, 6, 5, 12, 800),
+(46, 6, 6, 13, 800),
+(47, 6, 7, 12, 800),
+(48, 6, 8, 13, 800),
+(49, 7, 1, 14, 800),
+(50, 7, 2, 15, 800),
+(51, 7, 3, 14, 800),
+(52, 7, 4, 15, 800),
+(53, 7, 5, 14, 800),
+(54, 7, 6, 15, 800),
+(55, 7, 7, 14, 800),
+(56, 7, 8, 15, 800);
 
 INSERT INTO stock_adjustment (adjustment_id, station_id, product_id, quantity_adjusted, inventory_id, quantity_delta, reason, reported_by, adjusted_by) VALUES
 (1, 1, 3, -5, 3, -5, 'Damaged during unloading - crushed carton', 5, 5),
 (2, 1, 1, -2, 1, -2, 'Missing item - short shipment from train', 5, 5),
-(3, 3, 1, 10, 5, 10, 'Stock reconciliation surplus from Colombo train manifest', 5, 5);
+(3, 3, 1, 10, 17, 10, 'Stock reconciliation surplus from Colombo train manifest', 5, 5);
 
 -- 15. ROSTER_ASSIGNMENT (Compliant Truck Dispatches: Drivers <= 40h, Assistants <= 60h, Non-overlapping, No consecutive driver runs)
 INSERT INTO roster_assignment (roster_id, request_key, route_id, truck_id, driver_id, assistant_id, dispatcher_id, start_time, end_time, status) VALUES
@@ -1385,20 +1816,27 @@ INSERT INTO roster_assignment (roster_id, request_key, route_id, truck_id, drive
 (18, 'REQ-ROST-0018', 1, 1, 2, 5, 3, '2026-09-10 10:00:00', '2026-09-10 14:00:00', 'COMPLETED'),
 (19, 'REQ-ROST-0019', 2, 2, 1, 4, 3, '2026-09-14 10:00:00', '2026-09-14 15:30:00', 'COMPLETED'),
 (20, 'REQ-ROST-0020', 3, 4, 3, 6, 19, '2026-10-18 09:00:00', '2026-10-18 13:30:00', 'IN_TRANSIT'),
-(21, 'REQ-ROST-0021', 4, 3, 2, 5, 3, '2026-10-18 10:00:00', '2026-10-18 13:30:00', 'IN_TRANSIT');
+(21, 'REQ-ROST-0021', 4, 3, 2, 5, 3, '2026-10-18 10:00:00', '2026-10-18 13:30:00', 'IN_TRANSIT'),
+(22, 'REQ-ROST-0022', 1, 1, 1, 4, 3, '2026-02-23 10:00:00', '2026-02-23 14:00:00', 'COMPLETED'),
+(23, 'REQ-ROST-0023', 8, 2, 2, 5, 3, '2026-02-24 10:00:00', '2026-02-24 14:00:00', 'COMPLETED'),
+(24, 'REQ-ROST-0024', 9, 4, 3, 6, 19, '2026-03-10 12:00:00', '2026-03-10 16:30:00', 'COMPLETED'),
+(25, 'REQ-ROST-0025', 2, 1, 1, 4, 3, '2026-03-14 10:00:00', '2026-03-14 14:00:00', 'COMPLETED'),
+(26, 'REQ-ROST-0026', 3, 4, 3, 6, 19, '2026-03-18 12:00:00', '2026-03-18 16:30:00', 'COMPLETED'),
+(27, 'REQ-ROST-0027', 1, 2, 2, 5, 3, '2026-03-23 10:00:00', '2026-03-23 14:00:00', 'COMPLETED'),
+(28, 'REQ-ROST-0028', 8, 1, 1, 4, 3, '2026-03-28 10:00:00', '2026-03-28 14:00:00', 'COMPLETED');
 
 -- 16. DELIVERY (Doorstep Deliveries linked to Customer Orders and Roster Runs)
 INSERT INTO delivery (delivery_id, roster_id, order_id, delivered_at, delivery_status, proof_reference, assigned_at, assigned_by, cargo_weight_kg) VALUES
 (1, 1, 1001, '2026-02-10 13:45:00', 'DELIVERED', 'Signed by Recipient M. Fernando (NIC 841920391V)', '2026-02-10 09:50:00', 3, 500.00),
 (2, 2, 1002, '2026-02-10 22:15:00', 'DELIVERED', 'Handed over to warehouse supervisor, seal verified', '2026-02-10 17:50:00', 3, 750.00),
 (3, 3, 1003, '2026-02-11 16:15:00', 'DELIVERED', 'Signed by Store Mgr K. De Silva', '2026-02-11 11:50:00', 19, 600.00),
-(4, 1, 1004, '2026-02-23 13:30:00', 'DELIVERED', 'Direct customer signature, undamaged', '2026-02-23 09:50:00', 3, 450.00),
-(5, 2, 1005, '2026-02-24 13:30:00', 'DELIVERED', 'Delivered to loading dock 2, Pettah', '2026-02-24 09:50:00', 3, 800.00),
-(6, 3, 1006, '2026-03-10 16:00:00', 'DELIVERED', 'Proof slip signed by Galle retail mgr', '2026-03-10 11:50:00', 19, 350.00),
-(7, 2, 1007, '2026-03-14 13:00:00', 'DELIVERED', 'Customer verified all crates intact', '2026-03-14 09:50:00', 3, 620.00),
-(8, 3, 1008, '2026-03-18 16:15:00', 'DELIVERED', 'Southern Mart receiving dock, stamp confirmed', '2026-03-18 11:50:00', 19, 580.00),
-(9, 1, 1009, '2026-03-23 13:30:00', 'DELIVERED', 'Pettah Main St signed by cashier', '2026-03-23 09:50:00', 3, 400.00),
-(10, 2, 1010, '2026-03-28 13:30:00', 'DELIVERED', 'Kelaniya hub receipt verified', '2026-03-28 09:50:00', 3, 720.00),
+(4, 22, 1004, '2026-02-23 13:30:00', 'DELIVERED', 'Direct customer signature, undamaged', '2026-02-23 09:50:00', 3, 450.00),
+(5, 23, 1005, '2026-02-24 13:30:00', 'DELIVERED', 'Delivered to loading dock 2, Pettah', '2026-02-24 09:50:00', 3, 800.00),
+(6, 24, 1006, '2026-03-10 16:00:00', 'DELIVERED', 'Proof slip signed by Galle retail mgr', '2026-03-10 11:50:00', 19, 350.00),
+(7, 25, 1007, '2026-03-14 13:00:00', 'DELIVERED', 'Customer verified all crates intact', '2026-03-14 09:50:00', 3, 620.00),
+(8, 26, 1008, '2026-03-18 16:15:00', 'DELIVERED', 'Southern Mart receiving dock, stamp confirmed', '2026-03-18 11:50:00', 19, 580.00),
+(9, 27, 1009, '2026-03-23 13:30:00', 'DELIVERED', 'Pettah Main St signed by cashier', '2026-03-23 09:50:00', 3, 400.00),
+(10, 28, 1010, '2026-03-28 13:30:00', 'DELIVERED', 'Kelaniya hub receipt verified', '2026-03-28 09:50:00', 3, 720.00),
 (11, 4, 1011, '2026-05-15 13:45:00', 'DELIVERED', 'Negombo cold store gate 1 signed', '2026-05-15 10:20:00', 3, 650.00),
 (12, 4, 1012, '2026-05-15 13:30:00', 'DELIVERED', 'Katunayake FTZ customs cleared & signed', '2026-05-15 10:20:00', 3, 850.00),
 (13, 5, 1013, '2026-05-16 16:15:00', 'DELIVERED', 'Matara wholesale store stamp & signature', '2026-05-16 12:20:00', 3, 540.00),
@@ -1426,151 +1864,11 @@ INSERT INTO audit_log (audit_id, user_id, action, entity_id, outcome, occurred_a
 (3, 19, 'ASSIGN_ROSTER', 3, 'ACCEPTED', '2026-02-11 11:50:00', 'roster_assignment', 3),
 (4, 3, 'ASSIGN_ROSTER', 8, 'ACCEPTED', '2026-08-10 09:50:00', 'roster_assignment', 8),
 (5, 3, 'ASSIGN_ROSTER', 9, 'ACCEPTED', '2026-08-10 17:50:00', 'roster_assignment', 9),
-(6, 19, 'ASSIGN_ROSTER', 10, 'ACCEPTED', '2026-08-11 11:50:00', 'roster_assignment', 10);
-
-SOURCE 02_views.sql
-SOURCE 09_roster_assignment.sql
-SOURCE 10_roster_reporting.sql
-
-
-DELIMITER //
-DROP TRIGGER IF EXISTS trg_order_destination_immutable//
-CREATE TRIGGER trg_order_destination_immutable BEFORE UPDATE ON customer_order FOR EACH ROW
-BEGIN
-    IF (NOT (OLD.delivery_route_id <=> NEW.delivery_route_id)
-        OR NOT (OLD.delivery_address <=> NEW.delivery_address)
-        OR NOT (OLD.recipient_name <=> NEW.recipient_name)
-        OR NOT (OLD.recipient_phone <=> NEW.recipient_phone))
-       AND (EXISTS(SELECT 1 FROM rail_allocation ra JOIN order_item oi ON oi.order_item_id=ra.order_item_id WHERE oi.order_id=OLD.order_id)
-            OR EXISTS(SELECT 1 FROM delivery WHERE order_id=OLD.order_id)) THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Allocated order destinations are immutable';
-    END IF;
-END //
-DROP TRIGGER IF EXISTS trg_route_station_immutable//
-CREATE TRIGGER trg_route_station_immutable BEFORE UPDATE ON delivery_route FOR EACH ROW
-BEGIN
-    IF OLD.station_id<>NEW.station_id AND
-       (EXISTS(SELECT 1 FROM customer_order WHERE delivery_route_id=OLD.route_id)
-        OR EXISTS(SELECT 1 FROM roster_assignment WHERE route_id=OLD.route_id)) THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Referenced route station is immutable';
-    END IF;
-END //
-DROP TRIGGER IF EXISTS trg_delivery_assignment_immutable//
-CREATE TRIGGER trg_delivery_assignment_immutable BEFORE UPDATE ON delivery FOR EACH ROW
-BEGIN
-    IF NOT (OLD.delivery_id <=> NEW.delivery_id) OR NOT (OLD.roster_id <=> NEW.roster_id)
-       OR NOT (OLD.order_id <=> NEW.order_id) OR NOT (OLD.assigned_at <=> NEW.assigned_at)
-       OR NOT (OLD.assigned_by <=> NEW.assigned_by) OR NOT (OLD.cargo_weight_kg <=> NEW.cargo_weight_kg) THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Cargo assignment facts are immutable';
-    END IF;
-END //
-DROP TRIGGER IF EXISTS trg_delivery_evidence_delete//
-CREATE TRIGGER trg_delivery_evidence_delete BEFORE DELETE ON delivery FOR EACH ROW
-BEGIN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Cargo assignment evidence cannot be deleted';
-END //
--- trg_assigned_item_insert: Prevents adding items after a delivery record exists
-DROP TRIGGER IF EXISTS trg_assigned_item_insert//
-CREATE TRIGGER trg_assigned_item_insert
-BEFORE INSERT ON order_item
-FOR EACH ROW
-BEGIN
-    DECLARE v_order INT;
-
-    SELECT order_id INTO v_order
-    FROM customer_order
-    WHERE order_id = NEW.order_id
-    FOR UPDATE;
-
-    IF EXISTS (
-        SELECT 1
-        FROM delivery
-        WHERE order_id = NEW.order_id
-    ) THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'Assigned order items are immutable';
-    END IF;
-END //
-
--- trg_assigned_item_update: Prevents changing key order-item fields after delivery assignment
-DROP TRIGGER IF EXISTS trg_assigned_item_update//
-CREATE TRIGGER trg_assigned_item_update
-BEFORE UPDATE ON order_item
-FOR EACH ROW
-BEGIN
-    DECLARE v_order INT;
-    SELECT order_id INTO v_order FROM customer_order WHERE order_id = LEAST(OLD.order_id, NEW.order_id) FOR UPDATE;
-    SELECT order_id INTO v_order FROM customer_order WHERE order_id = GREATEST(OLD.order_id, NEW.order_id) FOR UPDATE;
-
-    IF (NOT (OLD.order_id <=> NEW.order_id) OR NOT (OLD.product_id <=> NEW.product_id)
-        OR NOT (OLD.quantity <=> NEW.quantity) OR NOT (OLD.order_item_id <=> NEW.order_item_id))
-       AND EXISTS (
-           SELECT 1
-           FROM delivery
-           WHERE order_id IN (OLD.order_id, NEW.order_id)
-       ) THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'Assigned order items are immutable';
-    END IF;
-END //
-
--- trg_assigned_item_delete: Prevents deleting order items after delivery assignment
-DROP TRIGGER IF EXISTS trg_assigned_item_delete//
-CREATE TRIGGER trg_assigned_item_delete
-BEFORE DELETE ON order_item
-FOR EACH ROW
-BEGIN
-    DECLARE v_order INT;
-
-    SELECT order_id INTO v_order
-    FROM customer_order
-    WHERE order_id = OLD.order_id
-    FOR UPDATE;
-
-    IF EXISTS (
-        SELECT 1
-        FROM delivery
-        WHERE order_id = OLD.order_id
-    ) THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'Assigned order items are immutable';
-    END IF;
-END //
-
--- 8. Feature 4.4 Stock Handling: Reserve and deduct station store inventory upon cargo assignment
-DROP TRIGGER IF EXISTS trg_deduct_inventory_on_delivery//
-CREATE TRIGGER trg_deduct_inventory_on_delivery
-AFTER INSERT ON delivery
-FOR EACH ROW
-BEGIN
-    DECLARE v_station_id INT;
-
-    SELECT dr.station_id INTO v_station_id
-    FROM roster_assignment ra
-    JOIN delivery_route dr ON dr.route_id = ra.route_id
-    WHERE ra.roster_id = NEW.roster_id
-    LIMIT 1;
-
-    IF v_station_id IS NULL THEN
-        SELECT dr.station_id INTO v_station_id
-        FROM customer_order co
-        JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
-        WHERE co.order_id = NEW.order_id
-        LIMIT 1;
-    END IF;
-
-    IF v_station_id IS NOT NULL THEN
-        UPDATE inventory inv
-        JOIN order_item oi ON oi.product_id = inv.product_id
-        SET inv.stored_quantity = GREATEST(0, inv.stored_quantity - oi.quantity)
-        WHERE oi.order_id = NEW.order_id AND inv.station_id = v_station_id;
-    END IF;
-END //
-DELIMITER ;
-
-CREATE INDEX idx_order_destination_date ON customer_order (delivery_route_id, delivery_date, status);
-CREATE INDEX idx_delivery_run_status ON delivery (roster_id, delivery_status, delivery_id);
-
-CREATE INDEX idx_manifest_station_status ON manifest (station_id, status);
-
-CREATE INDEX idx_stock_adjust_inv_date ON stock_adjustment (inventory_id, adjusted_at);
+(6, 19, 'ASSIGN_ROSTER', 10, 'ACCEPTED', '2026-08-11 11:50:00', 'roster_assignment', 10),
+(7, 3, 'ASSIGN_ROSTER', 22, 'ACCEPTED', '2026-02-23 09:50:00', 'roster_assignment', 22),
+(8, 3, 'ASSIGN_ROSTER', 23, 'ACCEPTED', '2026-02-24 09:50:00', 'roster_assignment', 23),
+(9, 19, 'ASSIGN_ROSTER', 24, 'ACCEPTED', '2026-03-10 11:50:00', 'roster_assignment', 24),
+(10, 3, 'ASSIGN_ROSTER', 25, 'ACCEPTED', '2026-03-14 09:50:00', 'roster_assignment', 25),
+(11, 19, 'ASSIGN_ROSTER', 26, 'ACCEPTED', '2026-03-18 11:50:00', 'roster_assignment', 26),
+(12, 3, 'ASSIGN_ROSTER', 27, 'ACCEPTED', '2026-03-23 09:50:00', 'roster_assignment', 27),
+(13, 3, 'ASSIGN_ROSTER', 28, 'ACCEPTED', '2026-03-28 09:50:00', 'roster_assignment', 28);
