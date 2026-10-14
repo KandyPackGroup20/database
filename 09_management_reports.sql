@@ -130,23 +130,39 @@ ORDER BY
 -- REPORT 4: Driver and Assistant Weekly Working Hours
 -- =======================================================
 
+WITH split_assignments AS (
+    -- Shifts within a single week or up to the Monday week boundary
+    SELECT 
+        ra.roster_id, ra.driver_id, ra.assistant_id,
+        YEARWEEK(ra.start_time, 1) AS work_week,
+        TIMESTAMPDIFF(MINUTE, ra.start_time, 
+            LEAST(ra.end_time, TIMESTAMP(DATE_ADD(DATE(ra.start_time), INTERVAL (7 - WEEKDAY(ra.start_time)) DAY)))
+        ) / 60.0 AS duration_hours
+    FROM roster_assignment ra
+    WHERE ra.status <> 'CANCELLED'
+
+    UNION ALL
+
+    -- Shifts crossing the Monday week boundary into the subsequent week
+    SELECT 
+        ra.roster_id, ra.driver_id, ra.assistant_id,
+        YEARWEEK(ra.end_time, 1) AS work_week,
+        TIMESTAMPDIFF(MINUTE, 
+            TIMESTAMP(DATE_ADD(DATE(ra.start_time), INTERVAL (7 - WEEKDAY(ra.start_time)) DAY)),
+            ra.end_time
+        ) / 60.0 AS duration_hours
+    FROM roster_assignment ra
+    WHERE ra.status <> 'CANCELLED'
+      AND YEARWEEK(ra.start_time, 1) <> YEARWEEK(ra.end_time, 1)
+)
 SELECT
     ds.delivery_staff_id,
     u.name AS staff_name,
     u.role AS staff_role,
 
-    YEARWEEK(ra.start_time, 1) AS work_week,
+    sa.work_week,
 
-    ROUND(
-        SUM(
-            TIMESTAMPDIFF(
-                MINUTE,
-                ra.start_time,
-                ra.end_time
-            )
-        ) / 60.0,
-        2
-    ) AS scheduled_hours,
+    ROUND(SUM(sa.duration_hours), 2) AS scheduled_hours,
 
     CASE
         WHEN u.role = 'DRIVER' THEN 40.00
@@ -155,22 +171,22 @@ SELECT
 
     CASE
         WHEN u.role = 'DRIVER'
-             AND SUM(TIMESTAMPDIFF(MINUTE,ra.start_time,ra.end_time))/60.0 >= 40
+             AND SUM(sa.duration_hours) >= 40
             THEN 'CAP_REACHED'
 
         WHEN u.role = 'ASSISTANT'
-             AND SUM(TIMESTAMPDIFF(MINUTE,ra.start_time,ra.end_time))/60.0 >= 60
+             AND SUM(sa.duration_hours) >= 60
             THEN 'CAP_REACHED'
 
         ELSE 'SAFE'
     END AS status_flag
 
-FROM roster_assignment ra
+FROM split_assignments sa
 
 JOIN delivery_staff ds
     ON (
-        ra.driver_id = ds.delivery_staff_id
-        OR ra.assistant_id = ds.delivery_staff_id
+        sa.driver_id = ds.delivery_staff_id
+        OR sa.assistant_id = ds.delivery_staff_id
     )
 
 JOIN user u
@@ -178,13 +194,12 @@ JOIN user u
 
 WHERE
     u.role IN ('DRIVER','ASSISTANT')
-    AND ra.status <> 'CANCELLED'
 
 GROUP BY
     ds.delivery_staff_id,
     u.name,
     u.role,
-    YEARWEEK(ra.start_time,1)
+    sa.work_week
 
 ORDER BY
     work_week,

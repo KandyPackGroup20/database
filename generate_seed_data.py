@@ -159,7 +159,9 @@ def generate_seed_sql():
         (18, 7, 2, '2026-10-20 06:30:00', '2026-10-20 10:00:00', 35.00, 'SCHEDULED'),
         (19, 7, 4, '2026-10-21 07:00:00', '2026-10-21 12:00:00', 40.00, 'SCHEDULED'),
         (20, 7, 5, '2026-10-22 05:00:00', '2026-10-22 12:30:00', 50.00, 'SCHEDULED'),
-        (21, 7, 6, '2026-10-23 06:00:00', '2026-10-23 12:00:00', 35.00, 'SCHEDULED')
+        (21, 7, 6, '2026-10-23 06:00:00', '2026-10-23 12:00:00', 35.00, 'SCHEDULED'),
+        (22, 7, 1, '2026-05-19 06:00:00', '2026-05-19 09:30:00', 40.00, 'COMPLETED'),
+        (23, 7, 3, '2026-05-20 07:00:00', '2026-05-20 11:30:00', 45.00, 'COMPLETED')
     ]
     t_lines = [f"({t[0]}, {t[1]}, {t[2]}, '{t[3]}', '{t[4]}', {t[5]:.2f}, '{t[6]}')" for t in trips]
     sql.append("INSERT INTO train_trip (trip_id, origin_station_id, destination_station_id, departure_datetime, arrival_datetime, total_capacity, status) VALUES")
@@ -350,7 +352,9 @@ def generate_seed_sql():
         (18, 2, 18, 'NULL', 'PENDING'),
         (19, 4, 19, 'NULL', 'PENDING'),
         (20, 5, 20, 'NULL', 'PENDING'),
-        (21, 6, 21, 'NULL', 'PENDING')
+        (21, 6, 21, 'NULL', 'PENDING'),
+        (22, 1, 22, "'2026-05-19 09:45:00'", 'RECEIVED'),
+        (23, 3, 23, "'2026-05-20 11:45:00'", 'RECEIVED')
     ]
     mf_lines = [f"({m[0]}, {m[1]}, {m[2]}, {m[3]}, '{m[4]}')" for m in manifests]
     sql.append("INSERT INTO manifest (manifest_id, station_id, trip_id, received_at, status) VALUES")
@@ -358,37 +362,89 @@ def generate_seed_sql():
 
     # 13. RAIL_ALLOCATIONS (Linking items to train trips, demonstrating multi-trip spillover)
     sql.append("-- 13. RAIL_ALLOCATION (Space allocation per train trip, single and multi-trip spillover)")
+    route_station_map = {r[0]: r[1] for r in routes}
+    order_station_map = {o[0]: route_station_map[o[5]] for o in orders}
+
     rates = {1: 0.0500, 2: 0.0400, 3: 0.0800, 4: 0.0450, 5: 0.0600, 6: 0.0550, 7: 0.0700, 8: 0.0850}
     allocs = []
     alloc_id = 1
-    # Assign rail trips based on destination and order date
+    spillover_done = False
+
+    # Assign rail trips strictly based on destination station and order date
     for it in items:
         it_id, oid, pid, qty, price = it
-        # Map oid to train trip
+        dest_station = order_station_map[oid]
+
+        # Select valid train trip whose destination_station_id strictly matches order's destination station
         if oid <= 1010:
-            # Feb/Mar
-            trip_id = 1 if oid % 2 == 1 else (2 if oid % 3 == 0 else 3)
+            # Q1 Trips: Station 1 -> Trip 1 or 2, Station 3 -> Trip 3
+            if dest_station == 1:
+                trip_id = 1 if oid % 2 == 1 else 2
+            elif dest_station == 3:
+                trip_id = 3
+            else:
+                trip_id = 1
         elif oid <= 1022:
-            # May/Jun
-            trip_id = 4 + (oid % 4)
+            # Q2 Trips: Station 1 -> Trip 22, Station 2 -> Trip 4, Station 3 -> Trip 23, Station 4 -> Trip 5, Station 5 -> Trip 6, Station 6 -> Trip 7
+            if dest_station == 1:
+                trip_id = 22
+            elif dest_station == 2:
+                trip_id = 4
+            elif dest_station == 3:
+                trip_id = 23
+            elif dest_station == 4:
+                trip_id = 5
+            elif dest_station == 5:
+                trip_id = 6
+            elif dest_station == 6:
+                trip_id = 7
+            else:
+                trip_id = 4
         elif oid <= 1034:
-            # Aug/Sep
-            trip_id = 8 + (oid % 7)
+            # Q3 Trips: Station 1 -> Trip 8 or 9, Station 2 -> Trip 11, Station 3 -> Trip 10, Station 4 -> Trip 12, Station 5 -> Trip 13, Station 6 -> Trip 14
+            if dest_station == 1:
+                trip_id = 8 if oid % 2 == 1 else 9
+            elif dest_station == 2:
+                trip_id = 11
+            elif dest_station == 3:
+                trip_id = 10
+            elif dest_station == 4:
+                trip_id = 12
+            elif dest_station == 5:
+                trip_id = 13
+            elif dest_station == 6:
+                trip_id = 14
+            else:
+                trip_id = 8
         elif oid <= 1040:
-            # Oct
-            trip_id = 15 + (oid % 6)
+            # Q4 Scheduled Trips: Station 1 -> Trip 15 or 16, Station 2 -> Trip 18, Station 3 -> Trip 17, Station 4 -> Trip 19, Station 5 -> Trip 20, Station 6 -> Trip 21
+            if dest_station == 1:
+                trip_id = 15 if oid % 2 == 1 else 16
+            elif dest_station == 2:
+                trip_id = 18
+            elif dest_station == 3:
+                trip_id = 17
+            elif dest_station == 4:
+                trip_id = 19
+            elif dest_station == 5:
+                trip_id = 20
+            elif dest_station == 6:
+                trip_id = 21
+            else:
+                trip_id = 15
         else:
             continue # 1041, 1042 are PENDING_RAIL_SCHEDULING
 
         sp = qty * rates[pid]
-        # For order 1023, let's create an explicit multi-trip spillover!
-        if oid == 1023 and it_id == 1:
+        # For order 1023 (first item), create explicit multi-trip spillover across Trip 8 and Trip 9 (both to Colombo Station 1)
+        if oid == 1023 and not spillover_done:
             q_part1 = qty // 2
             q_part2 = qty - q_part1
             allocs.append((alloc_id, it_id, 8, q_part1, round(q_part1 * rates[pid], 4), 2, "'2026-08-02 08:30:00'"))
             alloc_id += 1
             allocs.append((alloc_id, it_id, 9, q_part2, round(q_part2 * rates[pid], 4), 2, "'2026-08-02 08:35:00'"))
             alloc_id += 1
+            spillover_done = True
         else:
             allocs.append((alloc_id, it_id, trip_id, qty, round(sp, 4), 2, "'2026-08-02 09:00:00'"))
             alloc_id += 1
@@ -450,7 +506,14 @@ def generate_seed_sql():
         (18, 'REQ-ROST-0018', 1, 1, 2, 5, 3, '2026-09-10 10:00:00', '2026-09-10 14:00:00', 'COMPLETED'),
         (19, 'REQ-ROST-0019', 2, 2, 1, 4, 3, '2026-09-14 10:00:00', '2026-09-14 15:30:00', 'COMPLETED'),
         (20, 'REQ-ROST-0020', 3, 4, 3, 6, 19, '2026-10-18 09:00:00', '2026-10-18 13:30:00', 'IN_TRANSIT'),
-        (21, 'REQ-ROST-0021', 4, 3, 2, 5, 3, '2026-10-18 10:00:00', '2026-10-18 13:30:00', 'IN_TRANSIT')
+        (21, 'REQ-ROST-0021', 4, 3, 2, 5, 3, '2026-10-18 10:00:00', '2026-10-18 13:30:00', 'IN_TRANSIT'),
+        (22, 'REQ-ROST-0022', 1, 1, 1, 4, 3, '2026-02-23 10:00:00', '2026-02-23 14:00:00', 'COMPLETED'),
+        (23, 'REQ-ROST-0023', 8, 2, 2, 5, 3, '2026-02-24 10:00:00', '2026-02-24 14:00:00', 'COMPLETED'),
+        (24, 'REQ-ROST-0024', 9, 4, 3, 6, 19, '2026-03-10 12:00:00', '2026-03-10 16:30:00', 'COMPLETED'),
+        (25, 'REQ-ROST-0025', 2, 1, 1, 4, 3, '2026-03-14 10:00:00', '2026-03-14 14:00:00', 'COMPLETED'),
+        (26, 'REQ-ROST-0026', 3, 4, 3, 6, 19, '2026-03-18 12:00:00', '2026-03-18 16:30:00', 'COMPLETED'),
+        (27, 'REQ-ROST-0027', 1, 2, 2, 5, 3, '2026-03-23 10:00:00', '2026-03-23 14:00:00', 'COMPLETED'),
+        (28, 'REQ-ROST-0028', 8, 1, 1, 4, 3, '2026-03-28 10:00:00', '2026-03-28 14:00:00', 'COMPLETED')
     ]
     rst_lines = [f"({r[0]}, '{r[1]}', {r[2]}, {r[3]}, {r[4]}, {r[5]}, {r[6]}, '{r[7]}', '{r[8]}', '{r[9]}')" for r in rosters]
     sql.append("INSERT INTO roster_assignment (roster_id, request_key, route_id, truck_id, driver_id, assistant_id, dispatcher_id, start_time, end_time, status) VALUES")
@@ -463,13 +526,13 @@ def generate_seed_sql():
         (1, 1, 1001, "'2026-02-10 13:45:00'", 'DELIVERED', 'Signed by Recipient M. Fernando (NIC 841920391V)', '2026-02-10 09:50:00', 3, 500.00),
         (2, 2, 1002, "'2026-02-10 22:15:00'", 'DELIVERED', 'Handed over to warehouse supervisor, seal verified', '2026-02-10 17:50:00', 3, 750.00),
         (3, 3, 1003, "'2026-02-11 16:15:00'", 'DELIVERED', 'Signed by Store Mgr K. De Silva', '2026-02-11 11:50:00', 19, 600.00),
-        (4, 1, 1004, "'2026-02-23 13:30:00'", 'DELIVERED', 'Direct customer signature, undamaged', '2026-02-23 09:50:00', 3, 450.00),
-        (5, 2, 1005, "'2026-02-24 13:30:00'", 'DELIVERED', 'Delivered to loading dock 2, Pettah', '2026-02-24 09:50:00', 3, 800.00),
-        (6, 3, 1006, "'2026-03-10 16:00:00'", 'DELIVERED', 'Proof slip signed by Galle retail mgr', '2026-03-10 11:50:00', 19, 350.00),
-        (7, 2, 1007, "'2026-03-14 13:00:00'", 'DELIVERED', 'Customer verified all crates intact', '2026-03-14 09:50:00', 3, 620.00),
-        (8, 3, 1008, "'2026-03-18 16:15:00'", 'DELIVERED', 'Southern Mart receiving dock, stamp confirmed', '2026-03-18 11:50:00', 19, 580.00),
-        (9, 1, 1009, "'2026-03-23 13:30:00'", 'DELIVERED', 'Pettah Main St signed by cashier', '2026-03-23 09:50:00', 3, 400.00),
-        (10, 2, 1010, "'2026-03-28 13:30:00'", 'DELIVERED', 'Kelaniya hub receipt verified', '2026-03-28 09:50:00', 3, 720.00),
+        (4, 22, 1004, "'2026-02-23 13:30:00'", 'DELIVERED', 'Direct customer signature, undamaged', '2026-02-23 09:50:00', 3, 450.00),
+        (5, 23, 1005, "'2026-02-24 13:30:00'", 'DELIVERED', 'Delivered to loading dock 2, Pettah', '2026-02-24 09:50:00', 3, 800.00),
+        (6, 24, 1006, "'2026-03-10 16:00:00'", 'DELIVERED', 'Proof slip signed by Galle retail mgr', '2026-03-10 11:50:00', 19, 350.00),
+        (7, 25, 1007, "'2026-03-14 13:00:00'", 'DELIVERED', 'Customer verified all crates intact', '2026-03-14 09:50:00', 3, 620.00),
+        (8, 26, 1008, "'2026-03-18 16:15:00'", 'DELIVERED', 'Southern Mart receiving dock, stamp confirmed', '2026-03-18 11:50:00', 19, 580.00),
+        (9, 27, 1009, "'2026-03-23 13:30:00'", 'DELIVERED', 'Pettah Main St signed by cashier', '2026-03-23 09:50:00', 3, 400.00),
+        (10, 28, 1010, "'2026-03-28 13:30:00'", 'DELIVERED', 'Kelaniya hub receipt verified', '2026-03-28 09:50:00', 3, 720.00),
         (11, 4, 1011, "'2026-05-15 13:45:00'", 'DELIVERED', 'Negombo cold store gate 1 signed', '2026-05-15 10:20:00', 3, 650.00),
         (12, 4, 1012, "'2026-05-15 13:30:00'", 'DELIVERED', 'Katunayake FTZ customs cleared & signed', '2026-05-15 10:20:00', 3, 850.00),
         (13, 5, 1013, "'2026-05-16 16:15:00'", 'DELIVERED', 'Matara wholesale store stamp & signature', '2026-05-16 12:20:00', 3, 540.00),
@@ -502,7 +565,14 @@ def generate_seed_sql():
         (3, 19, 'ASSIGN_ROSTER', 3, 'ACCEPTED', "'2026-02-11 11:50:00'", 'roster_assignment', 3),
         (4, 3, 'ASSIGN_ROSTER', 8, 'ACCEPTED', "'2026-08-10 09:50:00'", 'roster_assignment', 8),
         (5, 3, 'ASSIGN_ROSTER', 9, 'ACCEPTED', "'2026-08-10 17:50:00'", 'roster_assignment', 9),
-        (6, 19, 'ASSIGN_ROSTER', 10, 'ACCEPTED', "'2026-08-11 11:50:00'", 'roster_assignment', 10)
+        (6, 19, 'ASSIGN_ROSTER', 10, 'ACCEPTED', "'2026-08-11 11:50:00'", 'roster_assignment', 10),
+        (7, 3, 'ASSIGN_ROSTER', 22, 'ACCEPTED', "'2026-02-23 09:50:00'", 'roster_assignment', 22),
+        (8, 3, 'ASSIGN_ROSTER', 23, 'ACCEPTED', "'2026-02-24 09:50:00'", 'roster_assignment', 23),
+        (9, 19, 'ASSIGN_ROSTER', 24, 'ACCEPTED', "'2026-03-10 11:50:00'", 'roster_assignment', 24),
+        (10, 3, 'ASSIGN_ROSTER', 25, 'ACCEPTED', "'2026-03-14 09:50:00'", 'roster_assignment', 25),
+        (11, 19, 'ASSIGN_ROSTER', 26, 'ACCEPTED', "'2026-03-18 11:50:00'", 'roster_assignment', 26),
+        (12, 3, 'ASSIGN_ROSTER', 27, 'ACCEPTED', "'2026-03-23 09:50:00'", 'roster_assignment', 27),
+        (13, 3, 'ASSIGN_ROSTER', 28, 'ACCEPTED', "'2026-03-28 09:50:00'", 'roster_assignment', 28)
     ]
     aud_lines = [f"({a[0]}, {a[1]}, '{a[2]}', {a[3]}, '{a[4]}', {a[5]}, '{a[6]}', {a[7]})" for a in audits]
     sql.append("INSERT INTO audit_log (audit_id, user_id, action, entity_id, outcome, occurred_at, entity_name, roster_id) VALUES")

@@ -1493,6 +1493,36 @@ BEGIN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Assigned order items are immutable';
     END IF;
 END //
+
+-- 8. Feature 4.4 Stock Handling: Reserve and deduct station store inventory upon cargo assignment
+DROP TRIGGER IF EXISTS trg_deduct_inventory_on_delivery//
+CREATE TRIGGER trg_deduct_inventory_on_delivery
+AFTER INSERT ON delivery
+FOR EACH ROW
+BEGIN
+    DECLARE v_station_id INT;
+
+    SELECT dr.station_id INTO v_station_id
+    FROM roster_assignment ra
+    JOIN delivery_route dr ON dr.route_id = ra.route_id
+    WHERE ra.roster_id = NEW.roster_id
+    LIMIT 1;
+
+    IF v_station_id IS NULL THEN
+        SELECT dr.station_id INTO v_station_id
+        FROM customer_order co
+        JOIN delivery_route dr ON dr.route_id = co.delivery_route_id
+        WHERE co.order_id = NEW.order_id
+        LIMIT 1;
+    END IF;
+
+    IF v_station_id IS NOT NULL THEN
+        UPDATE inventory inv
+        JOIN order_item oi ON oi.product_id = inv.product_id
+        SET inv.stored_quantity = GREATEST(0, inv.stored_quantity - oi.quantity)
+        WHERE oi.order_id = NEW.order_id AND inv.station_id = v_station_id;
+    END IF;
+END //
 DELIMITER ;
 
 CREATE INDEX idx_order_destination_date ON customer_order (delivery_route_id, delivery_date, status);
