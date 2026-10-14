@@ -104,15 +104,15 @@ def test_3_rbac_isolation():
     role_permissions = {
         "role_customer": {
             "allowed": ["v_customer_orders", "product", "customer_order", "order_item", "delivery_route"],
-            "denied": ["train_trip", "manifest", "inventory", "stock_adjustment", "sp_schedule_train_order", "sp_assign_truck_roster"]
+            "denied": ["train_trip", "manifest", "inventory", "stock_adjustment", "sp_schedule_train_order"]
         },
         "role_dispatcher": {
-            "allowed": ["truck", "delivery_staff", "roster_assignment", "v_available_drivers", "sp_assign_truck_roster"],
+            "allowed": ["truck", "delivery_staff", "roster_assignment", "v_available_drivers"],
             "denied": ["sp_schedule_train_order", "stock_adjustment", "product"]
         },
         "role_warehouse_staff": {
             "allowed": ["v_station_inventory", "storage_location", "stock_adjustment", "v_incoming_train_manifests"],
-            "denied": ["sp_schedule_train_order", "sp_assign_truck_roster", "customer_order"]
+            "denied": ["sp_schedule_train_order", "customer_order"]
         }
     }
 

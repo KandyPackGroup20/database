@@ -45,7 +45,7 @@ Scope: verify and complete the existing rail allocator, capacity/quantity integr
 
 ### Working baseline and contract conflicts
 
-The existing scheduler already locks the order and candidate trips, allocates whole product quantities in departure/trip-ID order, spills across trips, rolls back an insufficient allocation, records history/audit, and exposes capacity through `fn_trip_remaining_capacity` / `v_trip_capacity_usage`. Real tests confirmed those working paths; they were not rebuilt.
+The existing scheduler already locks the order and candidate trips, allocates whole product quantities in departure/trip-ID order, spills across trips, rolls back an insufficient allocation, records history/audit, and exposes capacity through `v_trip_capacity_usage`. Real tests confirmed those working paths; they were not rebuilt.
 
 Existing station foreign keys, `departure_datetime`, `arrival_datetime`, `allocated_by`, and `allocated_at` remain authoritative. `fn_order_item_space(order_item_id, quantity)` retains its existing signature and upward two-decimal rounding. `sp_schedule_train_order(order_id, actor_id, OUT result)` retains its audit/result contract. The prompt's renamed parameters/columns were not duplicated.
 

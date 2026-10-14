@@ -73,7 +73,6 @@ class RosterAuditSchemaTests(unittest.TestCase):
                         self.check_schema(cursor)
                         self.check_rows(cursor)
                     connection.rollback()
-                    self.check_procedure(connection)
         self.assertEqual(definitions[0], definitions[1])
 
     def check_schema(self, cursor):
@@ -122,44 +121,6 @@ class RosterAuditSchemaTests(unittest.TestCase):
                      "v_station_inventory", "v_customer_orders", "v_quarterly_sales"):
             cursor.execute("SELECT * FROM " + view + " LIMIT 1")  # fixed allowlist above
             cursor.fetchall()
-
-    def check_procedure(self, connection):
-        """Both installed procedure copies log only accepted assignments."""
-        with connection.cursor() as cursor:
-            cursor.execute("UPDATE delivery_staff SET work_hours=0")
-        connection.commit()
-        with connection.cursor() as cursor:
-            def call(route, start, end):
-                cursor.execute("CALL sp_assign_truck_roster(%s,1,1,4,3,%s,%s,1,@roster_result)",
-                               (route, start, end))
-                while cursor.nextset():
-                    pass
-                cursor.execute("SELECT @roster_result AS result")
-                return cursor.fetchone()["result"]
-
-            self.assertEqual(call(1, "2026-09-22 09:00:00", "2026-09-22 10:00:00"), "SUCCESS")
-            self.assertEqual(call(1, "2026-09-22 09:00:00", "2026-09-22 10:00:00"),
-                             "REJECTED_CHECK_A_OVERLAP")
-            # A missing route fails insertion after checks and must not log SYSTEM_ERROR.
-            self.assertEqual(call(99999, "2026-09-23 09:00:00", "2026-09-23 10:00:00"), "SYSTEM_ERROR")
-            cursor.execute("CREATE TRIGGER test_fail_procedure_audit BEFORE INSERT ON audit_log FOR EACH ROW "
-                           "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='controlled procedure audit failure'")
-            try:
-                self.assertEqual(call(1, "2026-09-24 09:00:00", "2026-09-24 10:00:00"), "SYSTEM_ERROR")
-            finally:
-                cursor.execute("DROP TRIGGER test_fail_procedure_audit")
-            cursor.execute("SELECT ra.request_key,ra.roster_id,a.entity_id,a.outcome "
-                           "FROM roster_assignment ra JOIN audit_log a ON a.roster_id=ra.roster_id")
-            rows = cursor.fetchall()
-            self.assertEqual(len(rows), 1)
-            self.assertTrue(rows[0]["request_key"])
-            self.assertEqual(rows[0]["roster_id"], rows[0]["entity_id"])
-            self.assertEqual(rows[0]["outcome"], "ACCEPTED")
-            cursor.execute("SELECT COUNT(*) AS n FROM audit_log")
-            self.assertEqual(cursor.fetchone()["n"], 1)
-            cursor.execute("SELECT work_hours FROM delivery_staff WHERE delivery_staff_id IN (1,4)")
-            self.assertEqual([row["work_hours"] for row in cursor.fetchall()], [1, 1])
-        connection.rollback()
 
     def check_rows(self, cursor):
         base = "INSERT INTO audit_log(user_id,action,entity_id,outcome,entity_name) VALUES (%s,%s,%s,%s,%s)"

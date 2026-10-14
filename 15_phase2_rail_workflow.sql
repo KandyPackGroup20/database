@@ -69,31 +69,6 @@ END //
 
 DELIMITER ;
 
--- Source: feature_4_2_rail_allocation/05_fn_trip_remaining_capacity.sql
--- remaining space on a trip
-DELIMITER //
-
-DROP FUNCTION IF EXISTS fn_trip_remaining_capacity//
-CREATE FUNCTION fn_trip_remaining_capacity(p_trip_id INT)
-RETURNS DECIMAL(10,2)
-READS SQL DATA
-BEGIN
-  DECLARE v_cap  DECIMAL(10,2);
-  DECLARE v_used DECIMAL(10,2);
-
-  SELECT total_capacity INTO v_cap FROM train_trip WHERE trip_id = p_trip_id;
-  IF v_cap IS NULL THEN
-    RETURN NULL;
-  END IF;
-
-  SELECT COALESCE(SUM(allocated_space), 0) INTO v_used
-    FROM rail_allocation WHERE trip_id = p_trip_id;
-
-  RETURN v_cap - v_used;
-END //
-
-DELIMITER ;
-
 -- Source: feature_4_2_rail_allocation/06_trg_capacity_check.sql
 -- capacity CHECK as triggers (a CHECK constraint cannot look at other rows)
 DELIMITER //
@@ -457,13 +432,6 @@ proc_body: BEGIN
   END IF;
 
   COMMIT;
-END //
-
--- keep the old name working (an older draft already lived in 03_procedures.sql)
-DROP PROCEDURE IF EXISTS sp_allocate_rail_capacity//
-CREATE PROCEDURE sp_allocate_rail_capacity(IN p_order_id INT, OUT p_status_result VARCHAR(50))
-BEGIN
-  CALL sp_schedule_train_order(p_order_id, NULL, p_status_result);
 END //
 
 DELIMITER ;

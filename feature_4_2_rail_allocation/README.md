@@ -16,7 +16,6 @@ Run order (after 00_master_init.sql has created the base schema):
 | 02_allocation_constraints.sql | CHECKs on RAIL_ALLOCATION |
 | 03_indexes.sql | indexes for trip search / capacity SUM |
 | 04_fn_order_item_space.sql | fn_order_item_space |
-| 05_fn_trip_remaining_capacity.sql | fn_trip_remaining_capacity |
 | 06_trg_capacity_check.sql | capacity triggers on RAIL_ALLOCATION |
 | 07_trg_trip_capacity_shrink.sql | trigger: capacity cannot drop below booked |
 | 08_sp_schedule_train_order.sql | sp_schedule_train_order (transaction + row locks) |

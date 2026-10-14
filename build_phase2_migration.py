@@ -9,7 +9,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 SOURCES = (
-    '04_fn_order_item_space.sql', '05_fn_trip_remaining_capacity.sql',
+    '04_fn_order_item_space.sql',
     '06_trg_capacity_check.sql', '07_trg_trip_capacity_shrink.sql',
     '08_sp_schedule_train_order.sql', '09_v_trip_capacity_usage.sql',
     '12_trg_allocation_quantity_guard.sql', '14_trg_rail_alloc_origin_bi.sql',

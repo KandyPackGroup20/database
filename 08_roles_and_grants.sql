@@ -102,7 +102,6 @@ GRANT SELECT ON kandypack_db.rail_allocation TO 'role_logistics_mgr';
 -- Why direct INSERT/UPDATE is denied: Manual row editing in rail_allocation could 
 -- cause cargo space over-allocation. All allocations must happen strictly through 
 -- the concurrency-safe stored procedure.
-GRANT EXECUTE ON PROCEDURE kandypack_db.sp_allocate_rail_capacity TO 'role_logistics_mgr';
 
 -- requires strategic reporting for the Logistics Manager. These views utilize advanced 
 -- SQL OLAP aggregations (GROUP BY ... WITH ROLLUP and window function DENSE_RANK()) 
@@ -126,7 +125,6 @@ GRANT SELECT, INSERT, UPDATE ON kandypack_db.delivery TO 'role_dispatcher';
 GRANT SELECT ON kandypack_db.v_available_drivers TO 'role_dispatcher';
 GRANT SELECT ON kandypack_db.v_available_assistants TO 'role_dispatcher';
 GRANT SELECT ON kandypack_db.v_drivers_near_cap TO 'role_dispatcher';
-GRANT EXECUTE ON PROCEDURE kandypack_db.sp_assign_truck_roster TO 'role_dispatcher';
 
       
 -- Role: STORE_MGR (Station inventory management, receiving train manifests)

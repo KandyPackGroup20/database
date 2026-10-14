@@ -235,11 +235,4 @@ proc_body: BEGIN
   COMMIT;
 END //
 
--- keep the old name working (an older draft already lived in 03_procedures.sql)
-DROP PROCEDURE IF EXISTS sp_allocate_rail_capacity//
-CREATE PROCEDURE sp_allocate_rail_capacity(IN p_order_id INT, OUT p_status_result VARCHAR(50))
-BEGIN
-  CALL sp_schedule_train_order(p_order_id, NULL, p_status_result);
-END //
-
 DELIMITER ;
