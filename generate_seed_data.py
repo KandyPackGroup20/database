@@ -4,9 +4,11 @@
 # - All orders have DATEDIFF(delivery_date, order_date) >= 7 (strictly respects 7-day advance order policy)
 # - At least 10 routes (11 routes covering all 6 destination cities + Kandy)
 # - Valid train schedule connecting Kandy to all 6 destination cities with defined capacities
-# - Multi-item orders with product references
-# - Rail allocations with single-trip and multi-trip spillover
-# - Manifests, Inventory, Trucks, Delivery Staff, Roster Assignments, and Deliveries
+# - All rail allocations strictly match destination stations AND respect chronology (train departs after order date)
+# - Multi-trip spillover demonstrates real capacity-driven spillover:
+#     Trip 8 is filled to exactly 100.0% of capacity (30.00 m³), spilling over to Trip 9
+# - Manifests, complete inventory across all station stores and catalog products
+# - Trucks, Delivery Staff, Roster Assignments, and Deliveries strictly within roster windows
 # - All 6 Management Reports return rich, meaningful data
 
 import datetime
@@ -98,25 +100,25 @@ def generate_seed_sql():
     sql.append(",\n".join(p_lines) + ";\n")
 
     # 3. STATION_STORE
-    sql.append("-- 3. STATION_STORE (All main destination hubs and Kandy central goods shed)")
+    sql.append("-- 3. STATION_STORE (All 6 Destination Station Hubs + Central Warehouse in Kandy)")
     stations = [
-        (1, 'Colombo', 'Colombo Main Railway Station Store, Colombo 10', 4),
-        (2, 'Negombo', 'Negombo Station Hub, Negombo', 13),
-        (3, 'Galle', 'Galle Station Hub, Galle', 14),
-        (4, 'Matara', 'Matara Station Hub, Matara', 15),
-        (5, 'Jaffna', 'Jaffna Station Hub, Jaffna', 16),
-        (6, 'Trincomalee', 'Trincomalee Station Hub, Trincomalee', 17),
-        (7, 'Kandy', 'Kandy Central Goods Yard, Kandy', 18)
+        (1, 'Colombo', 'Fort Railway Station Freight Terminal, Colombo 01', 1),
+        (2, 'Negombo', 'Negombo Main Railway Station Goods Shed, Negombo', 1),
+        (3, 'Galle', 'Galle Railway Station Yard, Old Station Road, Galle', 1),
+        (4, 'Matara', 'Matara Terminus Freight Hub, Station Road, Matara', 1),
+        (5, 'Jaffna', 'Jaffna Station Yard, Station Road, Jaffna', 1),
+        (6, 'Trincomalee', 'Trincomalee Harbour Railway Depot, Dockyard Road, Trincomalee', 1),
+        (7, 'Kandy', 'Central Freight Consolidation Hub, Peradeniya Goods Yard, Kandy', 1)
     ]
-    s_lines = [f"({s[0]}, '{s[1]}', '{s[2]}', {s[3]})" for s in stations]
-    sql.append("INSERT INTO station_store (station_id, city, address, manager_id) VALUES")
-    sql.append(",\n".join(s_lines) + ";\n")
+    st_lines = [f"({s[0]}, '{s[1]}', '{s[2]}', {s[3]})" for s in stations]
+    sql.append("INSERT INTO station_store (station_id, city, address, is_active) VALUES")
+    sql.append(",\n".join(st_lines) + ";\n")
 
     # 4. STORAGE_LOCATION
-    sql.append("-- 4. STORAGE_LOCATION (Depot storage bins for verified unloading)")
+    sql.append("-- 4. STORAGE_LOCATION (Specific Bins & Staging Racks per Station)")
     locations = [
         (1, 1, 'BIN-A1', 'General Goods'),
-        (2, 1, 'BIN-A2', 'General Goods'),
+        (2, 1, 'BIN-A2', 'Secure Vault'),
         (3, 3, 'BIN-G1', 'General Goods'),
         (4, 1, 'BIN-A3', 'Cold Storage'),
         (5, 2, 'BIN-N1', 'General Goods'),
@@ -136,32 +138,56 @@ def generate_seed_sql():
     sql.append(",\n".join(loc_lines) + ";\n")
 
     # 5. TRAIN_TRIP
-    sql.append("-- 5. TRAIN_TRIP (Valid Sri Lanka Railways Schedule from Kandy to All Main Cities)")
+    sql.append("-- 5. TRAIN_TRIP (Valid Sri Lanka Railways Schedule connecting Kandy to all Main Cities)")
+    # All trips depart after corresponding order placement and arrive before doorstep delivery
     trips = [
-        # Q1/Q2/Q3/Q4 Completed and Scheduled Trips
-        (1, 7, 1, '2026-02-10 06:00:00', '2026-02-10 09:30:00', 30.00, 'COMPLETED'),
-        (2, 7, 1, '2026-02-10 14:00:00', '2026-02-10 17:30:00', 40.00, 'COMPLETED'),
-        (3, 7, 3, '2026-02-11 07:00:00', '2026-02-11 11:30:00', 50.00, 'COMPLETED'),
-        (4, 7, 2, '2026-05-15 06:30:00', '2026-05-15 10:00:00', 35.00, 'COMPLETED'),
-        (5, 7, 4, '2026-05-16 07:00:00', '2026-05-16 12:00:00', 40.00, 'COMPLETED'),
-        (6, 7, 5, '2026-05-17 05:00:00', '2026-05-17 12:30:00', 50.00, 'COMPLETED'),
-        (7, 7, 6, '2026-05-18 06:00:00', '2026-05-18 12:00:00', 35.00, 'COMPLETED'),
-        (8, 7, 1, '2026-08-10 06:00:00', '2026-08-10 09:30:00', 30.00, 'COMPLETED'),
-        (9, 7, 1, '2026-08-10 14:00:00', '2026-08-10 17:30:00', 40.00, 'COMPLETED'),
-        (10, 7, 3, '2026-08-11 07:00:00', '2026-08-11 11:30:00', 50.00, 'COMPLETED'),
-        (11, 7, 2, '2026-08-12 06:30:00', '2026-08-12 10:00:00', 35.00, 'COMPLETED'),
-        (12, 7, 4, '2026-08-13 07:00:00', '2026-08-13 12:00:00', 40.00, 'COMPLETED'),
-        (13, 7, 5, '2026-08-14 05:00:00', '2026-08-14 12:30:00', 50.00, 'COMPLETED'),
-        (14, 7, 6, '2026-08-15 06:00:00', '2026-08-15 12:00:00', 35.00, 'COMPLETED'),
-        (15, 7, 1, '2026-10-18 06:00:00', '2026-10-18 09:30:00', 30.00, 'SCHEDULED'),
-        (16, 7, 1, '2026-10-18 14:00:00', '2026-10-18 17:30:00', 40.00, 'SCHEDULED'),
-        (17, 7, 3, '2026-10-19 07:00:00', '2026-10-19 11:30:00', 50.00, 'SCHEDULED'),
-        (18, 7, 2, '2026-10-20 06:30:00', '2026-10-20 10:00:00', 35.00, 'SCHEDULED'),
-        (19, 7, 4, '2026-10-21 07:00:00', '2026-10-21 12:00:00', 40.00, 'SCHEDULED'),
-        (20, 7, 5, '2026-10-22 05:00:00', '2026-10-22 12:30:00', 50.00, 'SCHEDULED'),
-        (21, 7, 6, '2026-10-23 06:00:00', '2026-10-23 12:00:00', 35.00, 'SCHEDULED'),
-        (22, 7, 1, '2026-05-19 06:00:00', '2026-05-19 09:30:00', 40.00, 'COMPLETED'),
-        (23, 7, 3, '2026-05-20 07:00:00', '2026-05-20 11:30:00', 45.00, 'COMPLETED')
+        # Q1 Completed Trips
+        (1, 7, 1, '2026-02-10 06:00:00', '2026-02-10 09:30:00', 30.00, 'COMPLETED'), # 1001
+        (2, 7, 1, '2026-02-10 14:00:00', '2026-02-10 17:30:00', 40.00, 'COMPLETED'), # 1002
+        (3, 7, 3, '2026-02-11 07:00:00', '2026-02-11 11:30:00', 50.00, 'COMPLETED'), # 1003
+        (24, 7, 1, '2026-02-23 06:00:00', '2026-02-23 09:30:00', 40.00, 'COMPLETED'), # 1004
+        (25, 7, 1, '2026-02-24 06:00:00', '2026-02-24 09:30:00', 40.00, 'COMPLETED'), # 1005
+        (26, 7, 3, '2026-03-10 07:00:00', '2026-03-10 11:30:00', 40.00, 'COMPLETED'), # 1006
+        (27, 7, 1, '2026-03-14 06:00:00', '2026-03-14 09:30:00', 40.00, 'COMPLETED'), # 1007
+        (28, 7, 3, '2026-03-18 07:00:00', '2026-03-18 11:30:00', 40.00, 'COMPLETED'), # 1008
+        (29, 7, 1, '2026-03-23 06:00:00', '2026-03-23 09:30:00', 40.00, 'COMPLETED'), # 1009
+        (30, 7, 1, '2026-03-28 06:00:00', '2026-03-28 09:30:00', 40.00, 'COMPLETED'), # 1010
+
+        # Q2 Completed Trips
+        (4, 7, 2, '2026-05-15 06:30:00', '2026-05-15 10:00:00', 35.00, 'COMPLETED'), # 1011, 1012
+        (5, 7, 4, '2026-05-16 07:00:00', '2026-05-16 12:00:00', 40.00, 'COMPLETED'), # 1013
+        (6, 7, 5, '2026-05-17 05:00:00', '2026-05-17 12:30:00', 50.00, 'COMPLETED'), # 1014
+        (7, 7, 6, '2026-05-18 06:00:00', '2026-05-18 12:00:00', 35.00, 'COMPLETED'), # 1015
+        (22, 7, 1, '2026-05-19 06:00:00', '2026-05-19 09:30:00', 40.00, 'COMPLETED'), # 1016, 1017
+        (23, 7, 3, '2026-05-20 07:00:00', '2026-05-20 11:30:00', 45.00, 'COMPLETED'), # 1018
+        (31, 7, 2, '2026-06-09 06:30:00', '2026-06-09 10:00:00', 35.00, 'COMPLETED'), # 1019
+        (32, 7, 4, '2026-06-14 07:00:00', '2026-06-14 12:00:00', 40.00, 'COMPLETED'), # 1020
+        (33, 7, 5, '2026-06-19 05:00:00', '2026-06-19 12:30:00', 50.00, 'COMPLETED'), # 1021
+        (34, 7, 6, '2026-06-24 06:00:00', '2026-06-24 12:00:00', 35.00, 'COMPLETED'), # 1022
+
+        # Q3 Completed Trips
+        # Trip 8 & Trip 9: Colombo Station 1. Trip 8 demonstrates 100% capacity saturation leading to Trip 9 spillover
+        (8, 7, 1, '2026-08-09 06:00:00', '2026-08-09 09:30:00', 30.00, 'COMPLETED'), # 1024 + 1023 Part 1 (Exact 30.00m³)
+        (9, 7, 1, '2026-08-09 14:00:00', '2026-08-09 17:30:00', 40.00, 'COMPLETED'), # 1023 Part 2 (Capacity Spillover)
+        (10, 7, 3, '2026-08-11 07:00:00', '2026-08-11 11:30:00', 50.00, 'COMPLETED'), # 1025
+        (11, 7, 2, '2026-08-12 06:30:00', '2026-08-12 10:00:00', 35.00, 'COMPLETED'), # 1026
+        (12, 7, 4, '2026-08-13 07:00:00', '2026-08-13 12:00:00', 40.00, 'COMPLETED'), # 1027
+        (13, 7, 5, '2026-08-14 05:00:00', '2026-08-14 12:30:00', 50.00, 'COMPLETED'), # 1028
+        (14, 7, 6, '2026-08-15 06:00:00', '2026-08-15 12:00:00', 35.00, 'COMPLETED'), # 1029
+        (35, 7, 1, '2026-08-18 06:00:00', '2026-08-18 09:30:00', 40.00, 'COMPLETED'), # 1030
+        (36, 7, 3, '2026-08-20 07:00:00', '2026-08-20 11:30:00', 40.00, 'COMPLETED'), # 1031
+        (37, 7, 2, '2026-08-23 06:30:00', '2026-08-23 10:00:00', 35.00, 'COMPLETED'), # 1032
+        (38, 7, 1, '2026-09-10 06:00:00', '2026-09-10 09:30:00', 40.00, 'COMPLETED'), # 1033
+        (39, 7, 1, '2026-09-14 06:00:00', '2026-09-14 09:30:00', 40.00, 'COMPLETED'), # 1034
+
+        # Q4 Scheduled Trips
+        (17, 7, 3, '2026-10-17 07:00:00', '2026-10-17 11:30:00', 50.00, 'SCHEDULED'), # 1035
+        (18, 7, 2, '2026-10-17 06:30:00', '2026-10-17 10:00:00', 35.00, 'SCHEDULED'), # 1036
+        (19, 7, 4, '2026-10-18 07:00:00', '2026-10-18 12:00:00', 40.00, 'SCHEDULED'), # 1037
+        (20, 7, 5, '2026-10-19 05:00:00', '2026-10-19 12:30:00', 50.00, 'SCHEDULED'), # 1038
+        (21, 7, 6, '2026-10-20 06:00:00', '2026-10-20 12:00:00', 35.00, 'SCHEDULED'), # 1039
+        (15, 7, 1, '2026-10-20 06:00:00', '2026-10-20 09:30:00', 30.00, 'SCHEDULED'), # 1040
+        (16, 7, 1, '2026-10-21 14:00:00', '2026-10-21 17:30:00', 40.00, 'SCHEDULED')
     ]
     t_lines = [f"({t[0]}, {t[1]}, {t[2]}, '{t[3]}', '{t[4]}', {t[5]:.2f}, '{t[6]}')" for t in trips]
     sql.append("INSERT INTO train_trip (trip_id, origin_station_id, destination_station_id, departure_datetime, arrival_datetime, total_capacity, status) VALUES")
@@ -239,7 +265,7 @@ def generate_seed_sql():
     sql.append(",\n".join(stf_lines) + ";\n")
 
     # 10. CUSTOMER_ORDER (42 orders: >= 40 orders required!)
-    # All orders satisfy: DATEDIFF(delivery_date, order_date) >= 7 (No trigger violations!)
+    # All orders satisfy: DATEDIFF(delivery_date, order_date) >= 7 (strictly respects 7-day advance order policy)
     sql.append("-- 10. CUSTOMER_ORDER (42 Orders spanning Q1, Q2, Q3, Q4 with >= 7 days advance notice)")
     orders = []
     # Q1 Orders: 1001-1010
@@ -296,20 +322,33 @@ def generate_seed_sql():
     sql.append("INSERT INTO customer_order (order_id, customer_id, order_date, delivery_date, status, delivery_route_id, delivery_address, recipient_name, recipient_phone) VALUES")
     sql.append(",\n".join(ord_lines) + ";\n")
 
-    # 11. ORDER_ITEMS (Multi-item orders)
+    # 11. ORDER_ITEMS (Multi-item Orders with Unit Prices and Product References)
     sql.append("-- 11. ORDER_ITEMS (Multi-item Orders with Unit Prices and Product References)")
     items = []
     item_id = 1
-    import random
-    # Seed deterministic items for all 42 orders
     prices = {1: 4500.0, 2: 3800.0, 3: 2600.0, 4: 4200.0, 5: 5200.0, 6: 4800.0, 7: 7500.0, 8: 8900.0}
     for o in orders:
         oid = o[0]
-        # Item 1
+        # For Order 1024, explicitly craft items so prior space on Trip 8 equals 28.35 m³:
+        # Item 1: Product 8 (rate 0.0850) -> 200 units = 17.00 m³
+        # Item 2: Product 5 (rate 0.0600) -> 150 units = 9.00 m³
+        # Item 3: Product 1 (rate 0.0500) -> 47 units = 2.35 m³
+        # Total = 28.35 m³!
+        if oid == 1024:
+            items.append((item_id, oid, 8, 200, prices[8]))
+            item_id += 1
+            items.append((item_id, oid, 5, 150, prices[5]))
+            item_id += 1
+            items.append((item_id, oid, 1, 47, prices[1]))
+            item_id += 1
+            continue
+
+        # Standard deterministic item generation for other orders
         p1 = ((oid * 3) % 8) + 1
         q1 = 20 + ((oid * 7) % 80)
         items.append((item_id, oid, p1, q1, prices[p1]))
         item_id += 1
+
         # Item 2 for most orders
         if oid % 2 == 0 or oid > 1030:
             p2 = ((oid * 5) % 8) + 1
@@ -317,6 +356,7 @@ def generate_seed_sql():
             q2 = 10 + ((oid * 11) % 50)
             items.append((item_id, oid, p2, q2, prices[p2]))
             item_id += 1
+
         # Item 3 for wholesale orders
         if oid % 4 == 0:
             p3 = ((oid * 7) % 8) + 1
@@ -329,9 +369,10 @@ def generate_seed_sql():
     sql.append("INSERT INTO order_item (order_item_id, order_id, product_id, quantity, unit_price_at_order) VALUES")
     sql.append(",\n".join(oi_lines) + ";\n")
 
-    # 12. MANIFEST (Must be before rail_allocation to prevent trigger conflict)
+    # 12. MANIFEST (Station Train Arrival Records for all Trips)
     sql.append("-- 12. MANIFEST (Station Train Arrival Records)")
     manifests = [
+        # Manifest for each trip, received_at is 15 mins after train trip arrival
         (1, 1, 1, "'2026-02-10 09:45:00'", 'RECEIVED'),
         (2, 1, 2, "'2026-02-10 17:45:00'", 'RECEIVED'),
         (3, 3, 3, "'2026-02-11 11:45:00'", 'RECEIVED'),
@@ -339,8 +380,8 @@ def generate_seed_sql():
         (5, 4, 5, "'2026-05-16 12:15:00'", 'RECEIVED'),
         (6, 5, 6, "'2026-05-17 12:45:00'", 'RECEIVED'),
         (7, 6, 7, "'2026-05-18 12:15:00'", 'RECEIVED'),
-        (8, 1, 8, "'2026-08-10 09:45:00'", 'RECEIVED'),
-        (9, 1, 9, "'2026-08-10 17:45:00'", 'RECEIVED'),
+        (8, 1, 8, "'2026-08-09 09:45:00'", 'RECEIVED'),
+        (9, 1, 9, "'2026-08-09 17:45:00'", 'RECEIVED'),
         (10, 3, 10, "'2026-08-11 11:45:00'", 'RECEIVED'),
         (11, 2, 11, "'2026-08-12 10:15:00'", 'RECEIVED'),
         (12, 4, 12, "'2026-08-13 12:15:00'", 'RECEIVED'),
@@ -354,92 +395,61 @@ def generate_seed_sql():
         (20, 5, 20, 'NULL', 'PENDING'),
         (21, 6, 21, 'NULL', 'PENDING'),
         (22, 1, 22, "'2026-05-19 09:45:00'", 'RECEIVED'),
-        (23, 3, 23, "'2026-05-20 11:45:00'", 'RECEIVED')
+        (23, 3, 23, "'2026-05-20 11:45:00'", 'RECEIVED'),
+        (24, 1, 24, "'2026-02-23 09:45:00'", 'RECEIVED'),
+        (25, 1, 25, "'2026-02-24 09:45:00'", 'RECEIVED'),
+        (26, 3, 26, "'2026-03-10 11:45:00'", 'RECEIVED'),
+        (27, 1, 27, "'2026-03-14 09:45:00'", 'RECEIVED'),
+        (28, 3, 28, "'2026-03-18 11:45:00'", 'RECEIVED'),
+        (29, 1, 29, "'2026-03-23 09:45:00'", 'RECEIVED'),
+        (30, 1, 30, "'2026-03-28 09:45:00'", 'RECEIVED'),
+        (31, 2, 31, "'2026-06-09 10:15:00'", 'RECEIVED'),
+        (32, 4, 32, "'2026-06-14 12:15:00'", 'RECEIVED'),
+        (33, 5, 33, "'2026-06-19 12:45:00'", 'RECEIVED'),
+        (34, 6, 34, "'2026-06-24 12:15:00'", 'RECEIVED'),
+        (35, 1, 35, "'2026-08-18 09:45:00'", 'RECEIVED'),
+        (36, 3, 36, "'2026-08-20 11:45:00'", 'RECEIVED'),
+        (37, 2, 37, "'2026-08-23 10:15:00'", 'RECEIVED'),
+        (38, 1, 38, "'2026-09-10 09:45:00'", 'RECEIVED'),
+        (39, 1, 39, "'2026-09-14 09:45:00'", 'RECEIVED')
     ]
     mf_lines = [f"({m[0]}, {m[1]}, {m[2]}, {m[3]}, '{m[4]}')" for m in manifests]
     sql.append("INSERT INTO manifest (manifest_id, station_id, trip_id, received_at, status) VALUES")
     sql.append(",\n".join(mf_lines) + "\nON DUPLICATE KEY UPDATE status=VALUES(status), received_at=VALUES(received_at);\n")
 
     # 13. RAIL_ALLOCATIONS (Linking items to train trips, demonstrating multi-trip spillover)
-    sql.append("-- 13. RAIL_ALLOCATION (Space allocation per train trip, single and multi-trip spillover)")
+    sql.append("-- 13. RAIL_ALLOCATION (Space allocation per train trip, single and capacity-driven multi-trip spillover)")
     route_station_map = {r[0]: r[1] for r in routes}
     order_station_map = {o[0]: route_station_map[o[5]] for o in orders}
+
+    order_trip_map = {
+        1001: 1, 1002: 2, 1003: 3, 1004: 24, 1005: 25, 1006: 26, 1007: 27, 1008: 28, 1009: 29, 1010: 30,
+        1011: 4, 1012: 4, 1013: 5, 1014: 6, 1015: 7, 1016: 22, 1017: 22, 1018: 23, 1019: 31, 1020: 32,
+        1021: 33, 1022: 34, 1023: 8, 1024: 8, 1025: 10, 1026: 11, 1027: 12, 1028: 13, 1029: 14, 1030: 35,
+        1031: 36, 1032: 37, 1033: 38, 1034: 39, 1035: 17, 1036: 18, 1037: 19, 1038: 20, 1039: 21, 1040: 15
+    }
 
     rates = {1: 0.0500, 2: 0.0400, 3: 0.0800, 4: 0.0450, 5: 0.0600, 6: 0.0550, 7: 0.0700, 8: 0.0850}
     allocs = []
     alloc_id = 1
     spillover_done = False
 
-    # Assign rail trips strictly based on destination station and order date
     for it in items:
         it_id, oid, pid, qty, price = it
-        dest_station = order_station_map[oid]
+        if oid in (1041, 1042):
+            continue # PENDING_RAIL_SCHEDULING
 
-        # Select valid train trip whose destination_station_id strictly matches order's destination station
-        if oid <= 1010:
-            # Q1 Trips: Station 1 -> Trip 1 or 2, Station 3 -> Trip 3
-            if dest_station == 1:
-                trip_id = 1 if oid % 2 == 1 else 2
-            elif dest_station == 3:
-                trip_id = 3
-            else:
-                trip_id = 1
-        elif oid <= 1022:
-            # Q2 Trips: Station 1 -> Trip 22, Station 2 -> Trip 4, Station 3 -> Trip 23, Station 4 -> Trip 5, Station 5 -> Trip 6, Station 6 -> Trip 7
-            if dest_station == 1:
-                trip_id = 22
-            elif dest_station == 2:
-                trip_id = 4
-            elif dest_station == 3:
-                trip_id = 23
-            elif dest_station == 4:
-                trip_id = 5
-            elif dest_station == 5:
-                trip_id = 6
-            elif dest_station == 6:
-                trip_id = 7
-            else:
-                trip_id = 4
-        elif oid <= 1034:
-            # Q3 Trips: Station 1 -> Trip 8 or 9, Station 2 -> Trip 11, Station 3 -> Trip 10, Station 4 -> Trip 12, Station 5 -> Trip 13, Station 6 -> Trip 14
-            if dest_station == 1:
-                trip_id = 8 if oid % 2 == 1 else 9
-            elif dest_station == 2:
-                trip_id = 11
-            elif dest_station == 3:
-                trip_id = 10
-            elif dest_station == 4:
-                trip_id = 12
-            elif dest_station == 5:
-                trip_id = 13
-            elif dest_station == 6:
-                trip_id = 14
-            else:
-                trip_id = 8
-        elif oid <= 1040:
-            # Q4 Scheduled Trips: Station 1 -> Trip 15 or 16, Station 2 -> Trip 18, Station 3 -> Trip 17, Station 4 -> Trip 19, Station 5 -> Trip 20, Station 6 -> Trip 21
-            if dest_station == 1:
-                trip_id = 15 if oid % 2 == 1 else 16
-            elif dest_station == 2:
-                trip_id = 18
-            elif dest_station == 3:
-                trip_id = 17
-            elif dest_station == 4:
-                trip_id = 19
-            elif dest_station == 5:
-                trip_id = 20
-            elif dest_station == 6:
-                trip_id = 21
-            else:
-                trip_id = 15
-        else:
-            continue # 1041, 1042 are PENDING_RAIL_SCHEDULING
-
+        trip_id = order_trip_map[oid]
         sp = qty * rates[pid]
-        # For order 1023 (first item), create explicit multi-trip spillover across Trip 8 and Trip 9 (both to Colombo Station 1)
+
+        # For Order 1023 Item (pid 6, 61 units total, space 3.3550 m³):
+        # Prior items on Trip 8 (Order 1024) use exactly 28.3500 m³.
+        # Trip 8 capacity is 30.00 m³ -> remaining capacity is exactly 1.6500 m³!
+        # At rate 0.0550 m³/unit: exactly 30 units (1.6500 m³) fit on Trip 8, saturating Trip 8 to 100.0% capacity!
+        # The remaining 31 units (1.7050 m³) spill over to Trip 9.
         if oid == 1023 and not spillover_done:
-            q_part1 = qty // 2
-            q_part2 = qty - q_part1
+            q_part1 = 30
+            q_part2 = qty - q_part1 # 31
             allocs.append((alloc_id, it_id, 8, q_part1, round(q_part1 * rates[pid], 4), 2, "'2026-08-02 08:30:00'"))
             alloc_id += 1
             allocs.append((alloc_id, it_id, 9, q_part2, round(q_part2 * rates[pid], 4), 2, "'2026-08-02 08:35:00'"))
@@ -454,29 +464,40 @@ def generate_seed_sql():
     sql.append(",\n".join(al_lines) + ";\n")
 
     # 14. INVENTORY & STOCK ADJUSTMENT
-    sql.append("-- 14. INVENTORY & STOCK ADJUSTMENT (Station Stock Holdings & Audit Adjustments)")
-    invs = [
-        (1, 1, 1, 1, 450),
-        (2, 1, 2, 2, 320),
-        (3, 1, 3, 4, 180),
-        (4, 1, 4, 1, 95),
-        (5, 3, 1, 3, 210),
-        (6, 3, 3, 7, 110),
-        (7, 2, 1, 5, 140),
-        (8, 2, 2, 6, 85),
-        (9, 4, 3, 8, 70),
-        (10, 5, 1, 10, 160),
-        (11, 6, 2, 12, 90),
-        (12, 7, 4, 14, 65)
-    ]
+    # Guarantee full coverage: All 7 stations hold ample stock of all 8 catalog products
+    # This guarantees zero false shortage errors during seed delivery insertion and full catalog availability
+    sql.append("-- 14. INVENTORY & STOCK ADJUSTMENT (Complete Station Stock Holdings & Audit Adjustments)")
+    invs = []
+    inv_id = 1
+    # Location mappings per station:
+    station_locs = {
+        1: [1, 2, 4], # Colombo
+        2: [5, 6],    # Negombo
+        3: [3, 7],    # Galle
+        4: [8, 9],    # Matara
+        5: [10, 11],  # Jaffna
+        6: [12, 13],  # Trincomalee
+        7: [14, 15]   # Kandy
+    }
+
+    for st_id in range(1, 8):
+        loc_list = station_locs[st_id]
+        base_qty = 1000 if st_id == 1 else 800
+        for p_id in range(1, 9):
+            loc_id = loc_list[(p_id - 1) % len(loc_list)]
+            invs.append((inv_id, st_id, p_id, loc_id, base_qty))
+            inv_id += 1
+
     inv_lines = [f"({i[0]}, {i[1]}, {i[2]}, {i[3]}, {i[4]})" for i in invs]
     sql.append("INSERT INTO inventory (inventory_id, station_id, product_id, location_id, stored_quantity) VALUES")
     sql.append(",\n".join(inv_lines) + ";\n")
 
+    # Stock adjustments for auditing (Station 1 Product 3, Station 1 Product 1, Station 3 Product 1)
+    # Stn 1 Prod 3 is inv_id 3; Stn 1 Prod 1 is inv_id 1; Stn 3 Prod 1 is inv_id 17
     adjs = [
         (1, 1, 3, -5, 3, -5, 'Damaged during unloading - crushed carton', 5, 5),
         (2, 1, 1, -2, 1, -2, 'Missing item - short shipment from train', 5, 5),
-        (3, 3, 1, 10, 5, 10, 'Stock reconciliation surplus from Colombo train manifest', 5, 5)
+        (3, 3, 1, 10, 17, 10, 'Stock reconciliation surplus from Colombo train manifest', 5, 5)
     ]
     adj_lines = [f"({a[0]}, {a[1]}, {a[2]}, {a[3]}, {a[4]}, {a[5]}, '{a[6]}', {a[7]}, {a[8]})" for a in adjs]
     sql.append("INSERT INTO stock_adjustment (adjustment_id, station_id, product_id, quantity_adjusted, inventory_id, quantity_delta, reason, reported_by, adjusted_by) VALUES")
@@ -487,7 +508,7 @@ def generate_seed_sql():
     rosters = [
         # (roster_id, request_key, route_id, truck_id, driver_id, assistant_id, dispatcher_id, start_time, end_time, status)
         (1, 'REQ-ROST-0001', 1, 1, 1, 4, 3, '2026-02-10 10:00:00', '2026-02-10 14:00:00', 'COMPLETED'),
-        (2, 'REQ-ROST-0002', 2, 2, 2, 4, 3, '2026-02-10 18:00:00', '2026-02-10 22:30:00', 'COMPLETED'), # Assistant 4 consecutive (2nd run, allowed)
+        (2, 'REQ-ROST-0002', 2, 2, 2, 4, 3, '2026-02-10 18:00:00', '2026-02-10 22:30:00', 'COMPLETED'),
         (3, 'REQ-ROST-0003', 3, 4, 3, 6, 19, '2026-02-11 12:00:00', '2026-02-11 16:30:00', 'COMPLETED'),
         (4, 'REQ-ROST-0004', 4, 3, 2, 5, 3, '2026-05-15 10:30:00', '2026-05-15 14:00:00', 'COMPLETED'),
         (5, 'REQ-ROST-0005', 5, 5, 7, 9, 3, '2026-05-16 12:30:00', '2026-05-16 16:30:00', 'COMPLETED'),
@@ -521,6 +542,7 @@ def generate_seed_sql():
 
     # 16. DELIVERY
     sql.append("-- 16. DELIVERY (Doorstep Deliveries linked to Customer Orders and Roster Runs)")
+    # All delivered_at timestamps fall strictly within linked roster start_time and end_time
     deliveries = [
         # (delivery_id, roster_id, order_id, delivered_at, delivery_status, proof_reference, assigned_at, assigned_by, cargo_weight_kg)
         (1, 1, 1001, "'2026-02-10 13:45:00'", 'DELIVERED', 'Signed by Recipient M. Fernando (NIC 841920391V)', '2026-02-10 09:50:00', 3, 500.00),
