@@ -837,15 +837,21 @@ CREATE TRIGGER trg_prevent_audit_log_modification BEFORE UPDATE ON audit_log FOR
 DROP TRIGGER IF EXISTS trg_prevent_audit_log_deletion//
 CREATE TRIGGER trg_prevent_audit_log_deletion BEFORE DELETE ON audit_log FOR EACH ROW BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'SECURITY VIOLATION: Audit logs immutable'; END //
 
--- Feature 4.4: Keep station stock in sync with the stock_adjustment log
+-- Feature 4.4: Stock Handling
+-- trg_apply_stock_adjustment: Synchronizes inventory quantities with stock-adjustment records
 DROP TRIGGER IF EXISTS trg_apply_stock_adjustment//
 CREATE TRIGGER trg_apply_stock_adjustment
 AFTER INSERT ON stock_adjustment
 FOR EACH ROW
 BEGIN
-    UPDATE inventory
-    SET stored_quantity = stored_quantity + NEW.quantity_delta
-    WHERE inventory_id = NEW.inventory_id;
+    IF NEW.inventory_id IS NOT NULL
+       AND NEW.quantity_delta IS NOT NULL THEN
+
+        UPDATE inventory
+        SET stored_quantity = stored_quantity + NEW.quantity_delta
+        WHERE inventory_id = NEW.inventory_id;
+
+    END IF;
 END //
 
 DROP TRIGGER IF EXISTS trg_user_account_creation_policy//
@@ -1463,34 +1469,71 @@ CREATE TRIGGER trg_delivery_evidence_delete BEFORE DELETE ON delivery FOR EACH R
 BEGIN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Cargo assignment evidence cannot be deleted';
 END //
+-- trg_assigned_item_insert: Prevents adding items after a delivery record exists
 DROP TRIGGER IF EXISTS trg_assigned_item_insert//
-CREATE TRIGGER trg_assigned_item_insert BEFORE INSERT ON order_item FOR EACH ROW
+CREATE TRIGGER trg_assigned_item_insert
+BEFORE INSERT ON order_item
+FOR EACH ROW
 BEGIN
     DECLARE v_order INT;
-    SELECT order_id INTO v_order FROM customer_order WHERE order_id=NEW.order_id FOR UPDATE;
-    IF EXISTS(SELECT 1 FROM delivery WHERE order_id=NEW.order_id) THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Assigned order items are immutable';
+
+    SELECT order_id INTO v_order
+    FROM customer_order
+    WHERE order_id = NEW.order_id
+    FOR UPDATE;
+
+    IF EXISTS (
+        SELECT 1
+        FROM delivery
+        WHERE order_id = NEW.order_id
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Assigned order items are immutable';
     END IF;
 END //
+
+-- trg_assigned_item_update: Prevents changing key order-item fields after delivery assignment
 DROP TRIGGER IF EXISTS trg_assigned_item_update//
-CREATE TRIGGER trg_assigned_item_update BEFORE UPDATE ON order_item FOR EACH ROW
+CREATE TRIGGER trg_assigned_item_update
+BEFORE UPDATE ON order_item
+FOR EACH ROW
 BEGIN
     DECLARE v_order INT;
-    SELECT order_id INTO v_order FROM customer_order WHERE order_id=LEAST(OLD.order_id,NEW.order_id) FOR UPDATE;
-    SELECT order_id INTO v_order FROM customer_order WHERE order_id=GREATEST(OLD.order_id,NEW.order_id) FOR UPDATE;
+    SELECT order_id INTO v_order FROM customer_order WHERE order_id = LEAST(OLD.order_id, NEW.order_id) FOR UPDATE;
+    SELECT order_id INTO v_order FROM customer_order WHERE order_id = GREATEST(OLD.order_id, NEW.order_id) FOR UPDATE;
+
     IF (NOT (OLD.order_id <=> NEW.order_id) OR NOT (OLD.product_id <=> NEW.product_id)
         OR NOT (OLD.quantity <=> NEW.quantity) OR NOT (OLD.order_item_id <=> NEW.order_item_id))
-       AND EXISTS(SELECT 1 FROM delivery WHERE order_id IN (OLD.order_id,NEW.order_id)) THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Assigned order items are immutable';
+       AND EXISTS (
+           SELECT 1
+           FROM delivery
+           WHERE order_id IN (OLD.order_id, NEW.order_id)
+       ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Assigned order items are immutable';
     END IF;
 END //
+
+-- trg_assigned_item_delete: Prevents deleting order items after delivery assignment
 DROP TRIGGER IF EXISTS trg_assigned_item_delete//
-CREATE TRIGGER trg_assigned_item_delete BEFORE DELETE ON order_item FOR EACH ROW
+CREATE TRIGGER trg_assigned_item_delete
+BEFORE DELETE ON order_item
+FOR EACH ROW
 BEGIN
     DECLARE v_order INT;
-    SELECT order_id INTO v_order FROM customer_order WHERE order_id=OLD.order_id FOR UPDATE;
-    IF EXISTS(SELECT 1 FROM delivery WHERE order_id=OLD.order_id) THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Assigned order items are immutable';
+
+    SELECT order_id INTO v_order
+    FROM customer_order
+    WHERE order_id = OLD.order_id
+    FOR UPDATE;
+
+    IF EXISTS (
+        SELECT 1
+        FROM delivery
+        WHERE order_id = OLD.order_id
+    ) THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Assigned order items are immutable';
     END IF;
 END //
 
