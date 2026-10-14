@@ -44,7 +44,7 @@ def generate_seed_sql():
     # 1. USERS
     sql.append("-- 1. USER ACCOUNTS (Internal Staff with @kandypack.lk and Customers)")
     sql.append("INSERT INTO user (user_id, name, role, email, password_hash, force_password_reset, station_id) VALUES")
-    pw = "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeg6Lruj3vjPGga31lW"
+    pw = "$2b$12$Y2ZQO.ire6pzYJYRFfbb.u4ot/v10re.Qyeti6kriizB40UkLHsaW"
     users = [
         (1, 'System Superadmin', 'SUPERADMIN', 'admin@kandypack.lk', pw, 0, 'NULL'),
         (2, 'Kimal Logistics Mgr', 'LOGISTICS_MGR', 'logistics@kandypack.lk', pw, 0, 'NULL'),
